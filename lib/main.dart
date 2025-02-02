@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:telephony/telephony.dart';
 
-void main() => runApp(MyApp());
+void main() => runApp(const MyApp());
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -10,301 +11,241 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Financial Dashboard',
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0A0E21),
-        cardColor: const Color(0xFF1D1E33),
-      ),
-      home: FinancialDashboard(),
+      title: 'SMS Transaction Analyzer',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const TransactionScreen(),
     );
   }
 }
 
-class FinancialDashboard extends StatelessWidget {
-  final List<Expense> expenses = [
-    Expense('Food', 500, DateTime(2023, 5, 1)),
-    Expense('Transport', 300, DateTime(2023, 5, 5)),
-    Expense('Rent', 1200, DateTime(2023, 5, 10)),
-    Expense('Utilities', 250, DateTime(2023, 5, 15)),
-    Expense('Entertainment', 150, DateTime(2023, 5, 20)),
-  ];
+class TransactionScreen extends StatefulWidget {
+  const TransactionScreen({super.key});
 
-  final List<Income> incomes = [
-    Income('Salary', 3000, DateTime(2023, 5, 1)),
-    Income('Freelance', 800, DateTime(2023, 5, 15)),
-    Income('Investment', 200, DateTime(2023, 5, 25)),
-  ];
+  @override
+  State<TransactionScreen> createState() => _TransactionScreenState();
+}
 
-  FinancialDashboard({super.key});
+class _TransactionScreenState extends State<TransactionScreen> {
+  final Telephony telephony = Telephony.instance;
+  List<Transaction> transactions = [];
+  bool _isLoading = false;
+  bool _permissionDenied = false;
+
+  Future<void> _loadTransactions() async {
+    setState(() {
+      _isLoading = true;
+      _permissionDenied = false;
+    });
+
+    // Check and request SMS permission
+    final status = await Permission.sms.request();
+    if (!status.isGranted) {
+      setState(() => _permissionDenied = true);
+      return;
+    }
+
+    // Query SMS messages
+    final messages = await telephony.getInboxSms(
+      columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
+      filter: SmsFilter.where(SmsColumn.ADDRESS).like('192'), // Fixed filter
+    );
+    final parsed = messages
+        .map((msg) => Transaction.fromSms(msg.body ?? ''))
+        .where((t) => t.amount > 0)
+        .toList();
+
+    setState(() {
+      transactions = parsed;
+      _isLoading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final totalIncome = incomes.fold(0.0, (sum, item) => sum + item.amount);
-    final totalExpense = expenses.fold(0.0, (sum, item) => sum + item.amount);
-    final profit = totalIncome - totalExpense;
-
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                children: [
-                  _buildSummaryCards(totalIncome, totalExpense, profit),
-                  const SizedBox(height: 20),
-                  _buildBarChart(),
-                  const SizedBox(height: 20),
-                  _buildCashFlowChart(),
-                  const SizedBox(height: 20),
-                  _buildExpensePieChart(),
-                ],
+      appBar: AppBar(
+        title: const Text('Transaction Analyzer'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadTransactions,
+          ),
+        ],
+      ),
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_permissionDenied) {
+      return _PermissionDeniedMessage(onRetry: _loadTransactions);
+    }
+
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (transactions.isEmpty) {
+      return const Center(child: Text('No transactions found'));
+    }
+
+    return ListView.builder(
+      itemCount: transactions.length,
+      itemBuilder: (context, index) {
+        final transaction = transactions[index];
+        return TransactionCard(transaction: transaction);
+      },
+    );
+  }
+}
+
+class Transaction {
+  final bool isExpense;
+  final double amount;
+  final String? phoneNumber;
+  final DateTime? date;
+  final String originalMessage;
+
+  Transaction({
+    required this.isExpense,
+    required this.amount,
+    this.phoneNumber,
+    this.date,
+    required this.originalMessage,
+  });
+
+  factory Transaction.fromSms(String message) {
+    // Determine transaction type
+    final isExpense = message.toLowerCase().contains('uwareejisay');
+
+    // Amount extraction
+    final amountRegExp = RegExp(r'\$(\d+\.?\d*)');
+    final amountMatch = amountRegExp.firstMatch(message);
+    final amount =
+        amountMatch != null ? double.parse(amountMatch.group(1)!) : 0.0;
+
+    // Phone number extraction
+    final phoneRegExp = RegExp(r'(\+?252\d{9})|(\d{9})');
+    final phoneMatches = phoneRegExp.allMatches(message);
+    final phoneNumber =
+        phoneMatches.isNotEmpty ? phoneMatches.first.group(0) : null;
+
+    // Date extraction
+    final dateRegExp = RegExp(r'(\d{2}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})');
+    final dateMatch = dateRegExp.firstMatch(message);
+    DateTime? date;
+
+    if (dateMatch != null) {
+      try {
+        date = DateFormat('dd/MM/yy HH:mm:ss').parse(dateMatch.group(0)!);
+      } catch (e) {
+        print('Error parsing date: $e');
+      }
+    }
+
+    return Transaction(
+      isExpense: isExpense,
+      amount: amount,
+      phoneNumber: phoneNumber,
+      date: date,
+      originalMessage: message,
+    );
+  }
+}
+
+class TransactionCard extends StatelessWidget {
+  final Transaction transaction;
+
+  const TransactionCard({super.key, required this.transaction});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  transaction.isExpense ? 'EXPENSE' : 'INCOME',
+                  style: TextStyle(
+                    color: transaction.isExpense ? Colors.red : Colors.green,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+                Text(
+                  '\$${transaction.amount.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 20),
+            if (transaction.phoneNumber != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  'Phone: ${transaction.phoneNumber}',
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ),
+            if (transaction.date != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Date: ${DateFormat('dd/MM/yyyy HH:mm').format(transaction.date!)}',
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ),
+            Text(
+              transaction.originalMessage,
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PermissionDeniedMessage extends StatelessWidget {
+  final VoidCallback onRetry;
+
+  const _PermissionDeniedMessage({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text(
+            'SMS permission required to analyze transactions',
+            style: TextStyle(fontSize: 16),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.security),
+            label: const Text('Grant Permission'),
+            onPressed: () async {
+              await openAppSettings();
+              onRetry();
+            },
           ),
         ],
       ),
     );
   }
-
-  Widget _buildSummaryCards(double income, double expense, double profit) {
-    final formatter = NumberFormat.currency(symbol: '\$');
-    return Row(
-      children: [
-        _SummaryCard(
-          title: 'Income',
-          value: formatter.format(income),
-          color: Colors.green,
-        ),
-        _SummaryCard(
-          title: 'Expense',
-          value: formatter.format(expense),
-          color: Colors.red,
-        ),
-        _SummaryCard(
-          title: 'Profit',
-          value: formatter.format(profit),
-          color: profit >= 0 ? Colors.blue : Colors.orange,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBarChart() {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Monthly Comparison', style: TextStyle(fontSize: 18)),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 200,
-              child: BarChart(
-                BarChartData(
-                  alignment: BarChartAlignment.spaceAround,
-                  maxY: 3000,
-                  barTouchData: BarTouchData(enabled: true),
-                  titlesData: FlTitlesData(
-                    show: true,
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        getTitlesWidget: (value, meta) => Text(
-                          DateFormat.MMM()
-                              .format(DateTime(2023, value.toInt())),
-                        ),
-                      ),
-                    ),
-                  ),
-                  gridData: FlGridData(show: false),
-                  borderData: FlBorderData(show: false),
-                  barGroups: [
-                    BarChartGroupData(
-                      x: 5,
-                      barRods: [
-                        BarChartRodData(
-                          toY: totalIncomeByMonth(5),
-                          color: Colors.green,
-                          width: 16,
-                        ),
-                      ],
-                    ),
-                    BarChartGroupData(
-                      x: 5,
-                      barRods: [
-                        BarChartRodData(
-                          toY: totalExpenseByMonth(5),
-                          color: Colors.red,
-                          width: 16,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCashFlowChart() {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Cash Flow', style: TextStyle(fontSize: 18)),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 200,
-              child: LineChart(
-                LineChartData(
-                  lineTouchData: LineTouchData(enabled: true),
-                  gridData: FlGridData(show: false),
-                  titlesData: FlTitlesData(show: false),
-                  borderData: FlBorderData(show: false),
-                  lineBarsData: [
-                    LineChartBarData(
-                      spots: _generateCashFlowSpots(),
-                      isCurved: true,
-                      color: Colors.blue,
-                      barWidth: 2,
-                      belowBarData: BarAreaData(show: false),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildExpensePieChart() {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Expense Breakdown', style: TextStyle(fontSize: 18)),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 200,
-              child: PieChart(
-                PieChartData(
-                  sectionsSpace: 4,
-                  centerSpaceRadius: 80,
-                  sections: _generatePieChartSections(),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  List<PieChartSectionData> _generatePieChartSections() {
-    final categoryMap = <String, double>{};
-    for (var expense in expenses) {
-      categoryMap.update(
-        expense.category,
-        (value) => value + expense.amount,
-        ifAbsent: () => expense.amount,
-      );
-    }
-
-    final colors = [
-      Colors.red,
-      Colors.orange,
-      Colors.blue,
-      Colors.green,
-      Colors.purple
-    ];
-    int colorIndex = 0;
-
-    return categoryMap.entries.map((entry) {
-      return PieChartSectionData(
-        color: colors[colorIndex++ % colors.length],
-        value: entry.value,
-        title: '${entry.key}\n${entry.value.toStringAsFixed(0)}',
-        radius: 24,
-        titleStyle: const TextStyle(fontSize: 12, color: Colors.white),
-      );
-    }).toList();
-  }
-
-  List<FlSpot> _generateCashFlowSpots() {
-    // This is a simplified example - you should implement your own cash flow calculation
-    return List.generate(
-        30, (index) => FlSpot(index.toDouble(), (index * 100).toDouble()));
-  }
-
-  double totalIncomeByMonth(int month) {
-    return incomes
-        .where((income) => income.date.month == month)
-        .fold(0.0, (sum, item) => sum + item.amount);
-  }
-
-  double totalExpenseByMonth(int month) {
-    return expenses
-        .where((expense) => expense.date.month == month)
-        .fold(0.0, (sum, item) => sum + item.amount);
-  }
-}
-
-class _SummaryCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final Color color;
-
-  const _SummaryCard(
-      {required this.title, required this.value, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Card(
-        color: color.withOpacity(0.2),
-        child: Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: Column(
-            children: [
-              Text(title, style: TextStyle(color: color, fontSize: 14)),
-              const SizedBox(height: 4),
-              Text(value,
-                  style: TextStyle(
-                      color: color, fontSize: 16, fontWeight: FontWeight.bold)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class Expense {
-  final String category;
-  final double amount;
-  final DateTime date;
-
-  Expense(this.category, this.amount, this.date);
-}
-
-class Income {
-  final String source;
-  final double amount;
-  final DateTime date;
-
-  Income(this.source, this.amount, this.date);
 }
