@@ -116,7 +116,8 @@ class Transaction {
 
   factory Transaction.fromSms(String message) {
     // Determine transaction type
-    final isExpense = message.toLowerCase().contains('uwareejisay');
+    final isExpense = message.toLowerCase().contains('uwareejisay') ||
+        message.toLowerCase().contains('ku shubtay');
 
     // Amount extraction
     final amountRegExp = RegExp(r'\$(\d+\.?\d*)');
