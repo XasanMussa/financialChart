@@ -1,9 +1,8 @@
-// import 'package:deepseek_chart/sms_analyzer.dart';
-import 'package:deepseek_chart/sms_analyzer.dart';
+// import 'package:personal_finance_tracker/sms_analyzer.dart';
+import 'package:personal_finance_tracker/model/transaction_model.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:deepseek_chart/pages/transaction_analyzer.dart';
 
 class DashboardScreen extends StatefulWidget {
   final List<Transaction> transactions;
@@ -134,10 +133,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     bottomTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
-                        getTitlesWidget: (value, meta) => Text(
-                          DateFormat.MMM().format(_selectedDate),
-                          style: TextStyle(color: Colors.white),
-                        ),
+                        getTitlesWidget: (value, meta) {
+                          switch (value.toInt()) {
+                            case 0:
+                              return const Text("Income",
+                                  style: TextStyle(color: Colors.white));
+                            case 1:
+                              return const Text("Expense",
+                                  style: TextStyle(color: Colors.white));
+                            default:
+                              return const Text("");
+                          }
+                        },
                       ),
                     ),
                   ),
@@ -157,49 +164,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ],
                     ),
                   ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildExpensePieChart() {
-    final categoryMap = <String, double>{};
-    for (var t in widget.transactions
-        .where((t) => t.isExpense && _isSameMonth(t.date, _selectedDate))) {
-      categoryMap.update(
-        t.phoneNumber ?? 'Unknown',
-        (value) => value + t.amount,
-        ifAbsent: () => t.amount,
-      );
-    }
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Expense Breakdown', style: TextStyle(fontSize: 18)),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 200,
-              child: PieChart(
-                PieChartData(
-                  sectionsSpace: 4,
-                  centerSpaceRadius: 40,
-                  sections: categoryMap.entries
-                      .map((e) => PieChartSectionData(
-                            color: _getRandomColor(e.key),
-                            value: e.value,
-                            title:
-                                '${e.key.substring(0, 5)}\n${e.value.toStringAsFixed(0)}',
-                            radius: 24,
-                          ))
-                      .toList(),
                 ),
               ),
             ),

@@ -1,6 +1,7 @@
-import 'package:deepseek_chart/pages/dashboard_screen.dart';
-import 'package:deepseek_chart/sms_analyzer.dart';
+import 'package:personal_finance_tracker/model/transaction_card.dart';
+import 'package:personal_finance_tracker/model/transaction_model.dart';
 import 'package:flutter/material.dart';
+import 'package:personal_finance_tracker/pages/dashboard_screen.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:telephony/telephony.dart';
 
@@ -16,6 +17,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
   List<Transaction> transactions = [];
   bool _isLoading = false;
   bool _permissionDenied = false;
+  int _selectedIndex = 0; // Keeps track of which tab is selected
 
   Future<void> _loadTransactions() async {
     setState(() {
@@ -31,7 +33,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
     final messages = await telephony.getInboxSms(
       columns: [SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
-      filter: SmsFilter.where(SmsColumn.ADDRESS).like('192'),
+      filter: SmsFilter.where(SmsColumn.ADDRESS)
+          .like("192")
+          .or(SmsColumn.ADDRESS)
+          .like("eDahab"),
     );
 
     final parsed = messages
@@ -45,6 +50,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
     });
   }
 
+  @override
   void initState() {
     super.initState();
     _loadTransactions();
@@ -52,20 +58,39 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final List<Widget> screens = [
+      _buildTransactionView(),
+      DashboardScreen(transactions: transactions),
+    ];
+
+    return Scaffold(
+      body: screens[_selectedIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        onTap: (index) => setState(() => _selectedIndex = index),
+        selectedItemColor: Colors.blue,
+        unselectedItemColor: Colors.grey,
+        backgroundColor: Color(0xFF0A0E21),
+        elevation: 0,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.bar_chart),
+            label: 'Stats',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransactionView() {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Transaction Analyzer'),
+        title: const Text('Transactions'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.bar_chart),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) =>
-                    DashboardScreen(transactions: transactions),
-              ),
-            ),
-          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadTransactions,

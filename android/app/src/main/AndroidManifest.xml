@@ -3,7 +3,7 @@
 <uses-permission android:name="android.permission.RECEIVE_SMS"/>
 <uses-permission android:name="android.permission.READ_PHONE_NUMBERS"/>
     <application
-        android:label="deepseek_chart"
+        android:label="personal_finance_tracker"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
