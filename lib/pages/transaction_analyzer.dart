@@ -1,3 +1,5 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:personal_finance_tracker/authentication/signup_page.dart';
 import 'package:personal_finance_tracker/model/transaction_card.dart';
 import 'package:personal_finance_tracker/model/transaction_model.dart';
 import 'package:flutter/material.dart';
@@ -86,6 +88,19 @@ class _TransactionScreenState extends State<TransactionScreen> {
     );
   }
 
+  Future<void> Logout() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => SignUpPage()),
+      );
+      print("User successfully logged out.");
+    } catch (e) {
+      print("Error during logout: $e");
+    }
+  }
+
   Widget _buildTransactionView() {
     return Scaffold(
       appBar: AppBar(
@@ -95,6 +110,11 @@ class _TransactionScreenState extends State<TransactionScreen> {
             icon: const Icon(Icons.refresh),
             onPressed: _loadTransactions,
           ),
+          IconButton(
+              onPressed: () {
+                Logout();
+              },
+              icon: const Icon(Icons.logout)),
         ],
       ),
       body: _buildBody(),

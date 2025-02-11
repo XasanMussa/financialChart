@@ -1,4 +1,5 @@
-// import 'package:personal_finance_tracker/sms_analyzer.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:personal_finance_tracker/authentication/signup_page.dart';
 import 'package:personal_finance_tracker/firebase_options.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -18,14 +19,25 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'SMS Transaction Analyzer',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        scaffoldBackgroundColor: const Color(0xFF0A0E21),
-        cardColor: const Color(0xFF1D1E33),
-      ),
-      home: TransactionScreen(),
-    );
+        debugShowCheckedModeBanner: false,
+        title: 'SMS Transaction Analyzer',
+        theme: ThemeData(
+          primarySwatch: Colors.blue,
+          scaffoldBackgroundColor: const Color(0xFF0A0E21),
+          cardColor: const Color(0xFF1D1E33),
+        ),
+        home: StreamBuilder(
+            stream: FirebaseAuth.instance.authStateChanges(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(
+                  child: CircularProgressIndicator(),
+                );
+              }
+              if (snapshot.data != null) {
+                return const TransactionScreen();
+              }
+              return const SignUpPage();
+            }));
   }
 }
