@@ -57,6 +57,7 @@ class _SignUpPageState extends State<SignUpPage> {
               const SizedBox(height: 10),
               const SizedBox(height: 20),
               TextFormField(
+                style: TextStyle(color: Colors.white),
                 controller: emailController,
                 decoration: const InputDecoration(
                   hintText: 'Email',
@@ -64,6 +65,7 @@ class _SignUpPageState extends State<SignUpPage> {
               ),
               const SizedBox(height: 15),
               TextFormField(
+                style: TextStyle(color: Colors.white),
                 controller: passwordController,
                 decoration: const InputDecoration(
                   hintText: 'Password',

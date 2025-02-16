@@ -1,11 +1,20 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:io';
+
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:personal_finance_tracker/authentication/signup_page.dart';
 import 'package:personal_finance_tracker/model/transaction_card.dart';
-import 'package:personal_finance_tracker/model/transaction_model.dart';
-import 'package:flutter/material.dart';
 import 'package:personal_finance_tracker/pages/dashboard_screen.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' as FirebaseFirestore;
+import 'package:flutter/material.dart';
+import 'package:standard_searchbar/new/standard_search_anchor.dart';
+import 'package:standard_searchbar/new/standard_search_bar.dart';
+import 'package:standard_searchbar/new/standard_suggestion.dart';
+import 'package:standard_searchbar/new/standard_suggestions.dart';
 import 'package:telephony/telephony.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:personal_finance_tracker/model/transaction_model.dart';
 
 class TransactionScreen extends StatefulWidget {
   const TransactionScreen({super.key});
@@ -20,7 +29,8 @@ class _TransactionScreenState extends State<TransactionScreen> {
   bool _isLoading = false;
   bool _permissionDenied = false;
   int _selectedIndex = 0; // Keeps track of which tab is selected
-
+  String searchPhoneNumber = "";
+  // Load transactions and upload them if not already uploaded
   Future<void> _loadTransactions() async {
     setState(() {
       _isLoading = true;
@@ -52,10 +62,210 @@ class _TransactionScreenState extends State<TransactionScreen> {
     });
   }
 
+  Future<void> _processTransactionsInBackground(
+      List<Transaction> parsedTransactions) async {
+    // Use Future.delayed to run this in the background and avoid blocking the UI
+    Future(() async {
+      for (var transaction in parsedTransactions) {
+        bool exists =
+            await _isTransactionUploadedLocally(transaction.transactionID);
+        if (!exists) {
+          await _uploadTransactionToFirebase(transaction);
+        }
+      }
+    });
+  }
+
+  Future<String?> getDeviceId() async {
+    DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+    String? deviceId;
+
+    try {
+      if (Platform.isAndroid) {
+        // Android-specific code
+        AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+        // Unique ID for Android devices
+        deviceId = androidInfo.id;
+      } else if (Platform.isIOS) {
+        // iOS-specific code
+        IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
+        deviceId = iosInfo.identifierForVendor; // Unique ID for iOS devices
+      }
+    } catch (e) {
+      showSnackbar(context, "Error fetching device ID");
+      // print("Error fetching device ID: $e");
+    }
+
+    return deviceId;
+  }
+
+  void showSnackbar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration:
+            const Duration(seconds: 2), // Duration for the Snackbar to stay
+      ),
+    );
+  }
+
+  // Check if transaction is already uploaded based on transactionID
+  Future<bool> _isTransactionUploadedLocally(String transactionID) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(transactionID) ?? false; // If not found, return false
+  }
+
+  // Upload the transaction to Firebase and store its transactionID locally
+  Future<void> _uploadTransactionToFirebase(Transaction transaction) async {
+    String? deviceID = await getDeviceId();
+    try {
+      //upload deviceid to firebase
+      await FirebaseFirestore.FirebaseFirestore.instance
+          .collection("users")
+          .doc(FirebaseAuth.instance.currentUser?.uid)
+          .set({'deviceId': deviceID});
+
+      // Upload the transaction to Firebase
+      await FirebaseFirestore.FirebaseFirestore.instance
+          .collection('users')
+          .doc(FirebaseAuth.instance.currentUser?.uid)
+          .collection('transactions')
+          .doc(transaction
+              .transactionID) // Using transactionID as the document ID
+          .set({
+        'sender': transaction.originalMessage,
+        'amount': transaction.amount,
+        'category': transaction.category,
+        'date': FirebaseFirestore.Timestamp.fromDate(transaction.date!),
+        'isExpense': transaction.isExpense,
+        'phone': transaction.phoneNumber,
+        'transactionID': transaction.transactionID,
+      });
+
+      // Store the transactionID in local storage to mark it as uploaded
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(transaction.transactionID, true);
+
+      print("Transaction uploaded: ${transaction.transactionID}");
+    } catch (e) {
+      print("Error uploading transaction: $e");
+    }
+  }
+
+  final isLoggedIn = "false";
+  Future<void> Logout() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => SignUpPage()),
+      );
+
+      print("User successfully logged out.");
+    } catch (e) {
+      print("Error during logout: $e");
+    }
+  }
+
+  Future<List<Transaction>> getTransactions(String? userUid) async {
+    try {
+      final snapshot = await FirebaseFirestore.FirebaseFirestore.instance
+          .collection('users')
+          .doc(userUid)
+          .collection('transactions')
+          .get();
+
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+
+        return Transaction(
+          isExpense: (data['isExpense'] as bool?) ?? false,
+          amount: (data['amount'] as num?)?.toDouble() ?? 0.0,
+          phoneNumber: data['phone'] as String? ?? 'Unknown',
+          date: (data['date'] as FirebaseFirestore.Timestamp?)?.toDate() ??
+              DateTime.now(),
+          originalMessage: data['sender'] as String? ?? 'No message',
+          category: data['category'] as String? ?? 'Uncategorized',
+          transactionID: data['transactionID'] as String? ?? 'Unknown_ID',
+        );
+      }).toList();
+    } catch (e) {
+      print('Error fetching transactions: $e');
+      return [];
+    }
+  }
+
+  Future<List<Transaction>> getTransactionsByPhone(
+      String? userUid, String phoneNumber) async {
+    try {
+      final snapshot = await FirebaseFirestore.FirebaseFirestore.instance
+          .collection('users')
+          .doc(userUid)
+          .collection('transactions')
+          .where('phone', isEqualTo: phoneNumber) // Filter by phone number
+          .get();
+      print("document found for $phoneNumber");
+
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+
+        return Transaction(
+          isExpense: (data['isExpense'] as bool?) ?? false,
+          amount: (data['amount'] as num?)?.toDouble() ?? 0.0,
+          phoneNumber: data['phone'] as String? ?? 'Unknown',
+          date: (data['date'] as FirebaseFirestore.Timestamp?)?.toDate() ??
+              DateTime.now(),
+          originalMessage: data['sender'] as String? ?? 'No message',
+          category: data['category'] as String? ?? 'Uncategorized',
+          transactionID: data['transactionID'] as String? ?? 'Unknown_ID',
+        );
+      }).toList();
+    } catch (e) {
+      print('Error fetching transactions for phone number $phoneNumber: $e');
+      return [];
+    }
+  }
+
+  Future<void> check() async {
+    String? deviceId = "";
+    String? currentdeviceId = await getDeviceId();
+    FirebaseFirestore.DocumentSnapshot? documentSnapshot =
+        await FirebaseFirestore.FirebaseFirestore.instance
+            .collection("users")
+            .doc(FirebaseAuth.instance.currentUser?.uid)
+            .get();
+    if (documentSnapshot.exists) {
+      deviceId = documentSnapshot.get('deviceId');
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        showSnackbar(context, "Document deviceId does not exist");
+      });
+    }
+
+    if (deviceId == currentdeviceId) {
+      showSnackbar(context, "this the same user you can load transactions");
+
+      // _loadTransactions();
+      // _processTransactionsInBackground(transactions);
+      await readFromFirebase();
+    } else {
+      showSnackbar(context, "this is a different device you can only read it");
+      await readFromFirebase();
+    }
+  }
+
+  Future<void> readFromFirebase() async {
+    transactions =
+        await getTransactions(FirebaseAuth.instance.currentUser?.uid);
+    setState(() {}); // Update UI after fetching data
+  }
+
   @override
   void initState() {
     super.initState();
-    _loadTransactions();
+    check();
+
+    // getDeviceId();
   }
 
   @override
@@ -63,6 +273,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
     final List<Widget> screens = [
       _buildTransactionView(),
       DashboardScreen(transactions: transactions),
+      // Any other screen such as Dashboard
     ];
 
     return Scaffold(
@@ -88,19 +299,6 @@ class _TransactionScreenState extends State<TransactionScreen> {
     );
   }
 
-  Future<void> Logout() async {
-    try {
-      await FirebaseAuth.instance.signOut();
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => SignUpPage()),
-      );
-      print("User successfully logged out.");
-    } catch (e) {
-      print("Error during logout: $e");
-    }
-  }
-
   Widget _buildTransactionView() {
     return Scaffold(
       appBar: AppBar(
@@ -111,13 +309,56 @@ class _TransactionScreenState extends State<TransactionScreen> {
             onPressed: _loadTransactions,
           ),
           IconButton(
-              onPressed: () {
-                Logout();
-              },
-              icon: const Icon(Icons.logout)),
+            icon: const Icon(Icons.logout),
+            onPressed: Logout,
+          ),
         ],
       ),
-      body: _buildBody(),
+      body: Column(
+        children: [
+          buildSearchBar(onSubmit: (phonenumber) async {
+            transactions = await getTransactionsByPhone(
+                FirebaseAuth.instance.currentUser?.uid, phonenumber);
+            print(phonenumber);
+          }),
+          Expanded(child: _buildBody()),
+        ],
+      ),
+    );
+  }
+
+  Widget buildSearchBar({required Function(String) onSubmit}) {
+    TextEditingController _searchController = TextEditingController();
+    String searchValue = '';
+
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: TextField(
+        controller: _searchController,
+        decoration: InputDecoration(
+          prefixIcon: Icon(Icons.search, color: Colors.grey),
+          suffixIcon: IconButton(
+            icon: Icon(Icons.clear, color: Colors.grey),
+            onPressed: () {
+              _searchController.clear();
+              searchValue = ''; // Reset value
+            },
+          ),
+          hintText: "Search here...",
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.blueAccent),
+          ),
+          filled: true,
+          fillColor: Colors.grey[200],
+        ),
+        onChanged: (value) {
+          searchValue = value; // Store input value
+        },
+        onSubmitted: (value) {
+          onSubmit(value); // Trigger function when submitted
+        },
+      ),
     );
   }
 
