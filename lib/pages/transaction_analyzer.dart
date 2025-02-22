@@ -1,17 +1,15 @@
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:intl/intl.dart';
 import 'package:personal_finance_tracker/authentication/signup_page.dart';
 import 'package:personal_finance_tracker/model/transaction_card.dart';
 import 'package:personal_finance_tracker/pages/dashboard_screen.dart';
+import 'package:personal_finance_tracker/widgets/date_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' as FirebaseFirestore;
 import 'package:flutter/material.dart';
-import 'package:standard_searchbar/new/standard_search_anchor.dart';
-import 'package:standard_searchbar/new/standard_search_bar.dart';
-import 'package:standard_searchbar/new/standard_suggestion.dart';
-import 'package:standard_searchbar/new/standard_suggestions.dart';
 import 'package:telephony/telephony.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:personal_finance_tracker/model/transaction_model.dart';
@@ -226,6 +224,60 @@ class _TransactionScreenState extends State<TransactionScreen> {
     }
   }
 
+  Future<List<Transaction>> getTransactionsByDate(
+      String? userUid, String selectedDate) async {
+    try {
+      if (userUid == null) {
+        print("User is not logged in.");
+        return [];
+      }
+
+      // Convert selectedDate (yy-MM-dd) to a DateTime object
+      DateTime dateTime = DateFormat('yy-MM-dd').parse(selectedDate);
+
+      // Get the start and end of the day as Timestamp
+      FirebaseFirestore.Timestamp startOfDay =
+          FirebaseFirestore.Timestamp.fromDate(
+              DateTime(dateTime.year, dateTime.month, dateTime.day, 0, 0, 0));
+      FirebaseFirestore.Timestamp endOfDay =
+          FirebaseFirestore.Timestamp.fromDate(DateTime(
+              dateTime.year, dateTime.month, dateTime.day, 23, 59, 59));
+
+      print(
+          "🔍 Querying Firestore between: ${startOfDay.toDate()} and ${endOfDay.toDate()}");
+
+      // Firestore query to get transactions within the selected date range
+      final snapshot = await FirebaseFirestore.FirebaseFirestore.instance
+          .collection('users')
+          .doc(userUid)
+          .collection('transactions')
+          .where('date', isGreaterThanOrEqualTo: startOfDay)
+          .where('date', isLessThanOrEqualTo: endOfDay)
+          .get();
+
+      print(
+          "📄 Transactions found for date $selectedDate: ${snapshot.docs.length}");
+
+      // Convert Firestore snapshot to List<Transaction>
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+        return Transaction(
+          isExpense: (data['isExpense'] as bool?) ?? false,
+          amount: (data['amount'] as num?)?.toDouble() ?? 0.0,
+          phoneNumber: data['phone'] as String? ?? 'Unknown',
+          date: (data['date'] as FirebaseFirestore.Timestamp?)?.toDate() ??
+              DateTime.now(),
+          originalMessage: data['sender'] as String? ?? 'No message',
+          category: data['category'] as String? ?? 'Uncategorized',
+          transactionID: data['transactionID'] as String? ?? 'Unknown_ID',
+        );
+      }).toList();
+    } catch (e) {
+      print('❌ Error fetching transactions for date $selectedDate: $e');
+      return [];
+    }
+  }
+
   Future<void> check() async {
     String? deviceId = "";
     String? currentdeviceId = await getDeviceId();
@@ -245,9 +297,8 @@ class _TransactionScreenState extends State<TransactionScreen> {
     if (deviceId == currentdeviceId) {
       showSnackbar(context, "this the same user you can load transactions");
 
-      // _loadTransactions();
-      // _processTransactionsInBackground(transactions);
-      await readFromFirebase();
+      _loadTransactions();
+      _processTransactionsInBackground(transactions);
     } else {
       showSnackbar(context, "this is a different device you can only read it");
       await readFromFirebase();
@@ -300,6 +351,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
   }
 
   Widget _buildTransactionView() {
+    String selectedDateForSearch =
+        DateFormat('yy-MM-dd').format(DateTime.now());
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Transactions'),
@@ -321,6 +375,18 @@ class _TransactionScreenState extends State<TransactionScreen> {
                 FirebaseAuth.instance.currentUser?.uid, phonenumber);
             print(phonenumber);
           }),
+          DateSelector(
+            onDateSelected: (date) async {
+              setState(() {
+                selectedDateForSearch = date;
+              });
+              transactions = await getTransactionsByDate(
+                  FirebaseAuth.instance.currentUser?.uid,
+                  selectedDateForSearch);
+
+              print("Searching for transactions on: $selectedDateForSearch");
+            },
+          ),
           Expanded(child: _buildBody()),
         ],
       ),
