@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:intl/intl.dart';
+import 'package:crypto/crypto.dart';
 
 class Transaction {
   final bool isExpense;
@@ -7,6 +9,7 @@ class Transaction {
   final DateTime? date;
   final String originalMessage;
   final String category; // New field to specify category (eDahab or EVC)
+  final String transactionID; // Unique ID for the transaction
 
   Transaction({
     required this.isExpense,
@@ -15,6 +18,7 @@ class Transaction {
     this.date,
     required this.originalMessage,
     required this.category, // Initialize category
+    required this.transactionID, // Initialize transactionID
   });
 
   factory Transaction.fromSms(String message) {
@@ -27,26 +31,21 @@ class Transaction {
 
     if (message.contains('[-eDahab-Service-]')) {
       category = 'eDahab';
-      // eDahab specific logic
       if (message.toLowerCase().contains('ka heshay') ||
           message.toLowerCase().contains('ayaad ka heshay')) {
-        // Income for eDahab
         return Transaction._fromMessage(message,
             isExpense: false, category: category);
       } else if (message.toLowerCase().contains('u warejisay') ||
           message.toLowerCase().contains('wareejisay')) {
-        // Expense for eDahab
         return Transaction._fromMessage(message,
             isExpense: true, category: category);
       }
     } else if (message.contains('[-EVCPlus-]')) {
       category = 'EVC';
-      // EVC specific logic
       return Transaction._fromMessage(message,
           isExpense: isExpense, category: category);
     }
 
-    // If the category couldn't be determined, return a default (EVC)
     return Transaction._fromMessage(message,
         isExpense: isExpense, category: 'EVC');
   }
@@ -54,20 +53,17 @@ class Transaction {
   // Helper constructor to extract common fields and category
   static Transaction _fromMessage(String message,
       {required bool isExpense, required String category}) {
-    // Amount extraction for both EVC and eDahab
     final amountRegExp = RegExp(r'\$(\d+\.?\d*)|(\d+\.?\d*) Dollar');
     final amountMatch = amountRegExp.firstMatch(message);
     final amount = amountMatch != null
         ? double.parse(amountMatch.group(1) ?? amountMatch.group(2)!)
         : 0.0;
 
-    // Phone number extraction for both EVC and eDahab
     final phoneRegExp = RegExp(r'(\+?252\d{9})|(\d{9})');
     final phoneMatches = phoneRegExp.allMatches(message);
     final phoneNumber =
         phoneMatches.isNotEmpty ? phoneMatches.first.group(0) : null;
 
-    // Date extraction: eDahab uses dd-MM-yyyy, EVC uses dd/MM/yy format
     final dateRegExp = RegExp(r'(\d{2}[-/]\d{2}[-/]\d{4}|\d{2}/\d{2}/\d{2})');
     final dateMatch = dateRegExp.firstMatch(message);
     DateTime? date;
@@ -75,10 +71,8 @@ class Transaction {
     if (dateMatch != null) {
       try {
         if (dateMatch.group(0)!.contains("-")) {
-          // eDahab date format
           date = DateFormat('dd-MM-yyyy').parse(dateMatch.group(0)!);
         } else {
-          // EVC date format
           date = DateFormat('dd/MM/yy').parse(dateMatch.group(0)!);
         }
       } catch (e) {
@@ -86,13 +80,27 @@ class Transaction {
       }
     }
 
+    // Generate the transactionID using a hash of the transaction details
+    String transactionID =
+        generateTransactionId(message, amount, phoneNumber, date, category);
+
     return Transaction(
       isExpense: isExpense,
       amount: amount,
       phoneNumber: phoneNumber,
       date: date,
       originalMessage: message,
-      category: category, // Set the category
+      category: category,
+      transactionID: transactionID,
     );
+  }
+
+  // Generate a unique transaction ID by hashing the relevant fields
+  static String generateTransactionId(String message, double amount,
+      String? phoneNumber, DateTime? date, String category) {
+    var baseString = '$amount$phoneNumber${date?.toIso8601String()}$category';
+    var bytes = utf8.encode(baseString); // Convert the string to bytes
+    var digest = sha256.convert(bytes); // Generate the SHA-256 hash
+    return digest.toString(); // Return the hash as a string
   }
 }
