@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 class DateSelector extends StatefulWidget {
-  final Function(String) onDateSelected; // Callback function
+  final Function(String?)
+      onDateSelected; // Changed to accept null for deselection
 
   const DateSelector({super.key, required this.onDateSelected});
 
@@ -11,7 +12,7 @@ class DateSelector extends StatefulWidget {
 }
 
 class _DateSelectorState extends State<DateSelector> {
-  DateTime selectedDate = DateTime.now();
+  DateTime? selectedDate; // Changed to nullable
   int weekOffset = 0;
 
   List<DateTime> generateWeekDates(int weekOffset) {
@@ -32,11 +33,17 @@ class _DateSelectorState extends State<DateSelector> {
 
     setState(() {
       weekOffset = newOffset;
-      selectedDate = newSelectedDate;
-      String searchingDate = DateFormat('yy-MM-dd').format(selectedDate);
-
-      // Call the callback function
-      widget.onDateSelected(searchingDate);
+      // If the same date is selected, deselect it
+      if (selectedDate?.day == newSelectedDate.day &&
+          selectedDate?.month == newSelectedDate.month &&
+          selectedDate?.year == newSelectedDate.year) {
+        selectedDate = null;
+        widget.onDateSelected(null); // Notify parent about deselection
+      } else {
+        selectedDate = newSelectedDate;
+        String searchingDate = DateFormat('yy-MM-dd').format(selectedDate!);
+        widget.onDateSelected(searchingDate);
+      }
     });
   }
 
@@ -67,7 +74,7 @@ class _DateSelectorState extends State<DateSelector> {
                 onPressed: () async {
                   final date = await showDatePicker(
                     context: context,
-                    initialDate: selectedDate,
+                    initialDate: selectedDate ?? DateTime.now(),
                     firstDate: DateTime(2000),
                     lastDate: DateTime.now(),
                   );
@@ -104,20 +111,13 @@ class _DateSelectorState extends State<DateSelector> {
               itemCount: weekDates.length,
               itemBuilder: (context, index) {
                 DateTime date = weekDates[index];
-                bool isSelected = selectedDate.day == date.day &&
-                    selectedDate.month == date.month &&
-                    selectedDate.year == date.year;
+                bool isSelected = selectedDate != null &&
+                    selectedDate!.day == date.day &&
+                    selectedDate!.month == date.month &&
+                    selectedDate!.year == date.year;
 
                 return GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      selectedDate = date;
-                    });
-                    String searchingDate =
-                        DateFormat('yy-MM-dd').format(selectedDate);
-
-                    widget.onDateSelected(searchingDate);
-                  },
+                  onTap: () => updateWeekOffset(date),
                   child: Container(
                     width: 70,
                     margin: const EdgeInsets.only(right: 8),

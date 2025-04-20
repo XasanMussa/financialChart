@@ -171,11 +171,11 @@ class _TransactionScreenState extends State<TransactionScreen> {
           .collection('users')
           .doc(userUid)
           .collection('transactions')
+          .orderBy('date', descending: true) // Order by date descending
           .get();
 
       return snapshot.docs.map((doc) {
         final data = doc.data();
-
         return Transaction(
           isExpense: (data['isExpense'] as bool?) ?? false,
           amount: (data['amount'] as num?)?.toDouble() ?? 0.0,
@@ -200,13 +200,13 @@ class _TransactionScreenState extends State<TransactionScreen> {
           .collection('users')
           .doc(userUid)
           .collection('transactions')
-          .where('phone', isEqualTo: phoneNumber) // Filter by phone number
+          .where('phone', isEqualTo: phoneNumber)
+          .orderBy('date', descending: true) // Order by date descending
           .get();
       print("document found for $phoneNumber");
 
       return snapshot.docs.map((doc) {
         final data = doc.data();
-
         return Transaction(
           isExpense: (data['isExpense'] as bool?) ?? false,
           amount: (data['amount'] as num?)?.toDouble() ?? 0.0,
@@ -253,12 +253,12 @@ class _TransactionScreenState extends State<TransactionScreen> {
           .collection('transactions')
           .where('date', isGreaterThanOrEqualTo: startOfDay)
           .where('date', isLessThanOrEqualTo: endOfDay)
+          .orderBy('date', descending: true) // Order by date descending
           .get();
 
       print(
           "📄 Transactions found for date $selectedDate: ${snapshot.docs.length}");
 
-      // Convert Firestore snapshot to List<Transaction>
       return snapshot.docs.map((doc) {
         final data = doc.data();
         return Transaction(
@@ -290,7 +290,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
       deviceId = documentSnapshot.get('deviceId');
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        showSnackbar(context, "Document deviceId does not exist");
+        showSnackbar(context, "Document deviceId does not exist (new user)");
+        _loadTransactions();
+        _processTransactionsInBackground(transactions);
       });
     }
 
@@ -351,8 +353,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
   }
 
   Widget _buildTransactionView() {
-    String selectedDateForSearch =
-        DateFormat('yy-MM-dd').format(DateTime.now());
+    String? selectedDateForSearch;
 
     return Scaffold(
       appBar: AppBar(
@@ -360,7 +361,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadTransactions,
+            onPressed: check,
           ),
           IconButton(
             icon: const Icon(Icons.logout),
@@ -377,14 +378,18 @@ class _TransactionScreenState extends State<TransactionScreen> {
           }),
           DateSelector(
             onDateSelected: (date) async {
+              if (date == null) {
+                // Date was deselected, show all transactions
+                await readFromFirebase();
+              } else {
+                // Date was selected, filter transactions
+                transactions = await getTransactionsByDate(
+                    FirebaseAuth.instance.currentUser?.uid, date);
+                print("Searching for transactions on: $date");
+              }
               setState(() {
                 selectedDateForSearch = date;
               });
-              transactions = await getTransactionsByDate(
-                  FirebaseAuth.instance.currentUser?.uid,
-                  selectedDateForSearch);
-
-              print("Searching for transactions on: $selectedDateForSearch");
             },
           ),
           Expanded(child: _buildBody()),
