@@ -24,7 +24,9 @@ class TransactionScreen extends StatefulWidget {
 class _TransactionScreenState extends State<TransactionScreen> {
   final Telephony telephony = Telephony.instance;
   List<Transaction> transactions = [];
+  List<Transaction> searchResults = [];
   bool _isLoading = false;
+  bool _isSearching = false;
   bool _permissionDenied = false;
   int _selectedIndex = 0; // Keeps track of which tab is selected
   String searchPhoneNumber = "";
@@ -117,6 +119,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
   Future<void> _uploadTransactionToFirebase(Transaction transaction) async {
     String? deviceID = await getDeviceId();
     try {
+      // Debug log for phone number being stored
+      print(
+          '📱 Storing transaction with phone number: ${transaction.phoneNumber}');
+
       //upload deviceid to firebase
       await FirebaseFirestore.FirebaseFirestore.instance
           .collection("users")
@@ -128,15 +134,14 @@ class _TransactionScreenState extends State<TransactionScreen> {
           .collection('users')
           .doc(FirebaseAuth.instance.currentUser?.uid)
           .collection('transactions')
-          .doc(transaction
-              .transactionID) // Using transactionID as the document ID
+          .doc(transaction.transactionID)
           .set({
         'sender': transaction.originalMessage,
         'amount': transaction.amount,
         'category': transaction.category,
         'date': FirebaseFirestore.Timestamp.fromDate(transaction.date!),
         'isExpense': transaction.isExpense,
-        'phone': transaction.phoneNumber,
+        'phone': transaction.phoneNumber?.replaceAll(' ', '') ?? 'Unknown',
         'transactionID': transaction.transactionID,
       });
 
@@ -144,9 +149,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(transaction.transactionID, true);
 
-      print("Transaction uploaded: ${transaction.transactionID}");
+      print("✅ Transaction uploaded: ${transaction.transactionID}");
     } catch (e) {
-      print("Error uploading transaction: $e");
+      print("❌ Error uploading transaction: $e");
     }
   }
 
@@ -196,14 +201,24 @@ class _TransactionScreenState extends State<TransactionScreen> {
   Future<List<Transaction>> getTransactionsByPhone(
       String? userUid, String phoneNumber) async {
     try {
+      String normalizedNumber = phoneNumber.replaceAll(' ', '');
+      if (normalizedNumber.length > 9) {
+        normalizedNumber =
+            normalizedNumber.substring(normalizedNumber.length - 9);
+      }
+
+      String withZero = "0$normalizedNumber";
+      String withoutZero = normalizedNumber.startsWith('0')
+          ? normalizedNumber.substring(1)
+          : normalizedNumber;
+
       final snapshot = await FirebaseFirestore.FirebaseFirestore.instance
           .collection('users')
           .doc(userUid)
           .collection('transactions')
-          .where('phone', isEqualTo: phoneNumber)
-          .orderBy('date', descending: true) // Order by date descending
+          .where('phone', whereIn: [withZero, withoutZero])
+          .orderBy('date', descending: true)
           .get();
-      print("document found for $phoneNumber");
 
       return snapshot.docs.map((doc) {
         final data = doc.data();
@@ -219,7 +234,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
         );
       }).toList();
     } catch (e) {
-      print('Error fetching transactions for phone number $phoneNumber: $e');
+      print('❌ Error fetching transactions for phone number $phoneNumber: $e');
       return [];
     }
   }
@@ -357,7 +372,13 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Transactions'),
+        title: const Text(
+          'Transactions',
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -369,66 +390,166 @@ class _TransactionScreenState extends State<TransactionScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          buildSearchBar(onSubmit: (phonenumber) async {
-            transactions = await getTransactionsByPhone(
-                FirebaseAuth.instance.currentUser?.uid, phonenumber);
-            print(phonenumber);
-          }),
-          DateSelector(
-            onDateSelected: (date) async {
-              if (date == null) {
-                // Date was deselected, show all transactions
-                await readFromFirebase();
-              } else {
-                // Date was selected, filter transactions
-                transactions = await getTransactionsByDate(
-                    FirebaseAuth.instance.currentUser?.uid, date);
-                print("Searching for transactions on: $date");
-              }
-              setState(() {
-                selectedDateForSearch = date;
-              });
-            },
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              const Color(0xFF0A0E21),
+              const Color(0xFF0A0E21).withOpacity(0.8),
+            ],
           ),
-          Expanded(child: _buildBody()),
-        ],
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1D1E33),
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(24),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  buildSearchBar(onSubmit: (phonenumber) async {
+                    transactions = await getTransactionsByPhone(
+                        FirebaseAuth.instance.currentUser?.uid, phonenumber);
+                  }),
+                  const SizedBox(height: 16),
+                  DateSelector(
+                    onDateSelected: (date) async {
+                      if (date == null) {
+                        await readFromFirebase();
+                      } else {
+                        transactions = await getTransactionsByDate(
+                            FirebaseAuth.instance.currentUser?.uid, date);
+                      }
+                      setState(() {
+                        selectedDateForSearch = date;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: _buildBody(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void showSearchError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.info_outline, color: Colors.white),
+            const SizedBox(width: 8),
+            Text(message),
+          ],
+        ),
+        backgroundColor: Colors.blue,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+        margin: const EdgeInsets.all(8),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
 
   Widget buildSearchBar({required Function(String) onSubmit}) {
-    TextEditingController _searchController = TextEditingController();
-    String searchValue = '';
+    final TextEditingController controller = TextEditingController();
 
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: TextField(
-        controller: _searchController,
-        decoration: InputDecoration(
-          prefixIcon: Icon(Icons.search, color: Colors.grey),
-          suffixIcon: IconButton(
-            icon: Icon(Icons.clear, color: Colors.grey),
-            onPressed: () {
-              _searchController.clear();
-              searchValue = ''; // Reset value
-            },
-          ),
-          hintText: "Search here...",
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.blueAccent),
-          ),
-          filled: true,
-          fillColor: Colors.grey[200],
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A0E21),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.grey[800]!,
+          width: 1,
         ),
-        onChanged: (value) {
-          searchValue = value; // Store input value
-        },
-        onSubmitted: (value) {
-          onSubmit(value); // Trigger function when submitted
-        },
+      ),
+      child: TextField(
+        controller: controller,
+        style: const TextStyle(color: Colors.white),
+        keyboardType: TextInputType.number,
+        enabled: !_isSearching,
+        decoration: InputDecoration(
+          hintText: "Search by phone number...",
+          hintStyle: TextStyle(color: Colors.grey[500]),
+          prefixIcon: _isSearching
+              ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(Colors.grey[400]!),
+                    ),
+                  ),
+                )
+              : Icon(Icons.search, color: Colors.grey[500]),
+          suffixIcon: IconButton(
+            icon: Icon(Icons.clear, color: Colors.grey[500]),
+            onPressed: _isSearching
+                ? null
+                : () {
+                    controller.clear();
+                    setState(() {
+                      searchResults.clear();
+                    });
+                    readFromFirebase();
+                  },
+          ),
+          border: InputBorder.none,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        ),
+        onSubmitted: _isSearching
+            ? null
+            : (value) async {
+                if (value.isEmpty) {
+                  showSearchError('Please enter a phone number');
+                  return;
+                }
+
+                setState(() {
+                  _isSearching = true;
+                });
+
+                String searchValue = value.replaceAll(' ', '');
+                if (searchValue.length > 9) {
+                  searchValue = searchValue.substring(searchValue.length - 9);
+                }
+
+                final results = await getTransactionsByPhone(
+                    FirebaseAuth.instance.currentUser?.uid, searchValue);
+
+                setState(() {
+                  _isSearching = false;
+                  searchResults = results;
+                });
+
+                if (results.isEmpty) {
+                  showSearchError('No transactions found for this number');
+                }
+              },
       ),
     );
   }
@@ -437,15 +558,61 @@ class _TransactionScreenState extends State<TransactionScreen> {
     if (_permissionDenied) {
       return _PermissionDeniedMessage(onRetry: _loadTransactions);
     }
-    if (_isLoading) return const Center(child: CircularProgressIndicator());
-    if (transactions.isEmpty) {
-      return const Center(child: Text('No transactions found'));
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
+        ),
+      );
+    }
+
+    final displayTransactions =
+        searchResults.isNotEmpty ? searchResults : transactions;
+
+    if (displayTransactions.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.receipt_long,
+              size: 64,
+              color: Colors.grey[700],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No transactions found',
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Try adjusting your search or date filter',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
     return ListView.builder(
-      itemCount: transactions.length,
-      itemBuilder: (context, index) =>
-          TransactionCard(transaction: transactions[index]),
+      padding: const EdgeInsets.all(16),
+      itemCount: displayTransactions.length,
+      itemBuilder: (context, index) {
+        final isLastItem = index == displayTransactions.length - 1;
+        return Column(
+          children: [
+            TransactionCard(transaction: displayTransactions[index]),
+            if (!isLastItem) const SizedBox(height: 8),
+          ],
+        );
+      },
     );
   }
 }
@@ -458,24 +625,68 @@ class _PermissionDeniedMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text(
-            'SMS permission required to analyze transactions',
-            style: TextStyle(fontSize: 16),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            icon: const Icon(Icons.security),
-            label: const Text('Grant Permission'),
-            onPressed: () async {
-              await openAppSettings();
-              onRetry();
-            },
-          ),
-        ],
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        margin: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1D1E33),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 10,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.security,
+              size: 48,
+              color: Colors.grey[400],
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'SMS Permission Required',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'We need SMS permission to analyze your transactions',
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.security),
+              label: const Text('Grant Permission'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              onPressed: () async {
+                await openAppSettings();
+                onRetry();
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -23,7 +23,7 @@ class TransactionCard extends StatelessWidget {
               children: [
                 Text(
                   transaction.isExpense
-                      ? 'EXPENSE( ${transaction.category} }'
+                      ? 'EXPENSE( ${transaction.category} )'
                       : 'INCOME( ${transaction.category} )',
                   style: TextStyle(
                     color: transaction.isExpense ? Colors.red : Colors.green,
@@ -42,12 +42,17 @@ class TransactionCard extends StatelessWidget {
               ],
             ),
             const Divider(height: 20),
-            if (transaction.phoneNumber != null)
+            if (transaction.phoneNumber != null &&
+                transaction.phoneNumber!.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
                   'Phone: ${transaction.phoneNumber}',
-                  style: const TextStyle(fontSize: 14, color: Colors.white),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ),
             if (transaction.date != null)
@@ -56,7 +61,10 @@ class TransactionCard extends StatelessWidget {
                 child: Text(
                   'Date: ${DateFormat('dd/MM/yyyy HH:mm').format(transaction.date!)}',
                   style: const TextStyle(
-                      fontSize: 14, color: Color.fromARGB(255, 255, 255, 255)),
+                    fontSize: 14,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ),
             Text(

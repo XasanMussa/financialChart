@@ -59,10 +59,18 @@ class Transaction {
         ? double.parse(amountMatch.group(1) ?? amountMatch.group(2)!)
         : 0.0;
 
-    final phoneRegExp = RegExp(r'(\+?252\d{9})|(\d{9})');
+    // Updated phone number regex to ensure it captures all digits
+    final phoneRegExp = RegExp(r'(\+?252\d{9})|(\d{9,10})');
     final phoneMatches = phoneRegExp.allMatches(message);
-    final phoneNumber =
-        phoneMatches.isNotEmpty ? phoneMatches.first.group(0) : null;
+    String? phoneNumber;
+
+    if (phoneMatches.isNotEmpty) {
+      phoneNumber = phoneMatches.first.group(0);
+      // Ensure the phone number is exactly 10 digits
+      if (phoneNumber != null && phoneNumber.length > 10) {
+        phoneNumber = phoneNumber.substring(phoneNumber.length - 10);
+      }
+    }
 
     final dateRegExp = RegExp(r'(\d{2}[-/]\d{2}[-/]\d{4}|\d{2}/\d{2}/\d{2})');
     final dateMatch = dateRegExp.firstMatch(message);
