@@ -30,6 +30,11 @@ class _TransactionScreenState extends State<TransactionScreen> {
   bool _permissionDenied = false;
   int _selectedIndex = 0; // Keeps track of which tab is selected
   String searchPhoneNumber = "";
+  // Add these state variables for filter
+  String? _selectedCategory = 'All';
+  String? _selectedDate;
+  bool _isFiltering = false;
+
   // Load transactions and upload them if not already uploaded
   Future<void> _loadTransactions() async {
     setState(() {
@@ -368,83 +373,63 @@ class _TransactionScreenState extends State<TransactionScreen> {
   }
 
   Widget _buildTransactionView() {
-    String? selectedDateForSearch;
-
     return Scaffold(
+      backgroundColor: const Color(0xFF0A0E21),
       appBar: AppBar(
+        backgroundColor: const Color(0xFF0A0E21),
+        elevation: 0,
         title: const Text(
           'Transactions',
           style: TextStyle(
-            fontSize: 24,
+            fontSize: 22,
             fontWeight: FontWeight.bold,
+            color: Colors.white,
           ),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh, color: Colors.blue),
             onPressed: check,
           ),
           IconButton(
-            icon: const Icon(Icons.logout),
+            icon: const Icon(Icons.logout, color: Colors.blue),
             onPressed: Logout,
           ),
         ],
       ),
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              const Color(0xFF0A0E21),
-              const Color(0xFF0A0E21).withOpacity(0.8),
+              Color(0xFF0A0E21),
+              Color(0xFF0A0E21),
             ],
           ),
         ),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1D1E33),
-                borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(24),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1D1E33),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 10,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
+                child: buildSearchBar(onSubmit: (phonenumber) async {
+                  transactions = await getTransactionsByPhone(
+                      FirebaseAuth.instance.currentUser?.uid, phonenumber);
+                  setState(() {});
+                }),
               ),
-              child: Column(
-                children: [
-                  buildSearchBar(onSubmit: (phonenumber) async {
-                    transactions = await getTransactionsByPhone(
-                        FirebaseAuth.instance.currentUser?.uid, phonenumber);
-                  }),
-                  const SizedBox(height: 16),
-                  DateSelector(
-                    onDateSelected: (date) async {
-                      if (date == null) {
-                        await readFromFirebase();
-                      } else {
-                        transactions = await getTransactionsByDate(
-                            FirebaseAuth.instance.currentUser?.uid, date);
-                      }
-                      setState(() {
-                        selectedDateForSearch = date;
-                      });
-                    },
-                  ),
-                ],
+              const SizedBox(height: 8),
+              Expanded(
+                child: _buildBody(),
               ),
-            ),
-            Expanded(
-              child: _buildBody(),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -474,83 +459,244 @@ class _TransactionScreenState extends State<TransactionScreen> {
   Widget buildSearchBar({required Function(String) onSubmit}) {
     final TextEditingController controller = TextEditingController();
 
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF0A0E21),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: Colors.grey[800]!,
-          width: 1,
-        ),
-      ),
-      child: TextField(
-        controller: controller,
-        style: const TextStyle(color: Colors.white),
-        keyboardType: TextInputType.number,
-        enabled: !_isSearching,
-        decoration: InputDecoration(
-          hintText: "Search by phone number...",
-          hintStyle: TextStyle(color: Colors.grey[500]),
-          prefixIcon: _isSearching
-              ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(Colors.grey[400]!),
-                    ),
-                  ),
-                )
-              : Icon(Icons.search, color: Colors.grey[500]),
-          suffixIcon: IconButton(
-            icon: Icon(Icons.clear, color: Colors.grey[500]),
-            onPressed: _isSearching
-                ? null
-                : () {
-                    controller.clear();
-                    setState(() {
-                      searchResults.clear();
-                    });
-                    readFromFirebase();
-                  },
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF1D1E33),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: TextField(
+              controller: controller,
+              style: const TextStyle(color: Colors.white),
+              keyboardType: TextInputType.number,
+              enabled: !_isSearching,
+              decoration: InputDecoration(
+                hintText: "Search by phone number...",
+                hintStyle: TextStyle(color: Colors.grey),
+                prefixIcon: _isSearching
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.blue),
+                          ),
+                        ),
+                      )
+                    : const Icon(Icons.search, color: Colors.grey),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.grey),
+                  onPressed: _isSearching
+                      ? null
+                      : () {
+                          controller.clear();
+                          setState(() {
+                            searchResults.clear();
+                          });
+                          readFromFirebase();
+                        },
+                ),
+                border: InputBorder.none,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+              onSubmitted: _isSearching
+                  ? null
+                  : (value) async {
+                      if (value.isEmpty) {
+                        showSearchError('Please enter a phone number');
+                        return;
+                      }
+                      setState(() {
+                        _isSearching = true;
+                      });
+                      String searchValue = value.replaceAll(' ', '');
+                      if (searchValue.length > 9) {
+                        searchValue =
+                            searchValue.substring(searchValue.length - 9);
+                      }
+                      final results = await getTransactionsByPhone(
+                          FirebaseAuth.instance.currentUser?.uid, searchValue);
+                      setState(() {
+                        _isSearching = false;
+                        searchResults = results;
+                      });
+                      if (results.isEmpty) {
+                        showSearchError(
+                            'No transactions found for this number');
+                      }
+                    },
+            ),
           ),
-          border: InputBorder.none,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         ),
-        onSubmitted: _isSearching
-            ? null
-            : (value) async {
-                if (value.isEmpty) {
-                  showSearchError('Please enter a phone number');
-                  return;
-                }
+        const SizedBox(width: 8),
+        // Filter icon
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF1D1E33),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: IconButton(
+            icon: const Icon(Icons.filter_list, color: Colors.blue),
+            onPressed: _showFilterDialog,
+          ),
+        ),
+      ],
+    );
+  }
 
-                setState(() {
-                  _isSearching = true;
-                });
+  // Helper to filter transactions by category
+  List<Transaction> _filterByCategory(List<Transaction> txs, String? category) {
+    if (category == null || category == 'All') return txs;
+    return txs
+        .where((t) => t.category.toLowerCase() == category.toLowerCase())
+        .toList();
+  }
 
-                String searchValue = value.replaceAll(' ', '');
-                if (searchValue.length > 9) {
-                  searchValue = searchValue.substring(searchValue.length - 9);
-                }
-
-                final results = await getTransactionsByPhone(
-                    FirebaseAuth.instance.currentUser?.uid, searchValue);
-
-                setState(() {
-                  _isSearching = false;
-                  searchResults = results;
-                });
-
-                if (results.isEmpty) {
-                  showSearchError('No transactions found for this number');
-                }
-              },
-      ),
+  // Show filter dialog
+  void _showFilterDialog() async {
+    String? tempCategory = _selectedCategory;
+    String? tempDate = _selectedDate;
+    bool _isFiltering = false;
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return Dialog(
+              backgroundColor: const Color(0xFF1D1E33),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Filter Transactions',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                            color: Colors.white)),
+                    const SizedBox(height: 16),
+                    // Category dropdown
+                    DropdownButtonFormField<String>(
+                      value: tempCategory,
+                      dropdownColor: const Color(0xFF1D1E33),
+                      decoration: const InputDecoration(
+                        labelText: 'Category',
+                        labelStyle: TextStyle(color: Colors.white),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.blue),
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'All',
+                            child: Text('All',
+                                style: TextStyle(color: Colors.white))),
+                        DropdownMenuItem(
+                            value: 'EVC',
+                            child: Text('EVC',
+                                style: TextStyle(color: Colors.white))),
+                        DropdownMenuItem(
+                            value: 'eDahab',
+                            child: Text('eDahab',
+                                style: TextStyle(color: Colors.white))),
+                      ],
+                      onChanged: (val) => tempCategory = val,
+                    ),
+                    const SizedBox(height: 16),
+                    // Date selector
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0A0E21),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: DateSelector(
+                        onDateSelected: (date) {
+                          tempDate = date;
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    if (_isFiltering)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: CircularProgressIndicator(
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.blue)),
+                      ),
+                    if (!_isFiltering)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _selectedCategory = 'All';
+                                _selectedDate = null;
+                              });
+                              Navigator.pop(context);
+                              readFromFirebase();
+                            },
+                            child: const Text('Clear',
+                                style: TextStyle(color: Colors.blue)),
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onPressed: _isFiltering
+                                ? null
+                                : () async {
+                                    setStateDialog(() => _isFiltering = true);
+                                    setState(() {
+                                      _selectedCategory = tempCategory;
+                                      _selectedDate = tempDate;
+                                    });
+                                    // Apply filter logic
+                                    if (_selectedDate != null) {
+                                      transactions =
+                                          await getTransactionsByDate(
+                                              FirebaseAuth
+                                                  .instance.currentUser?.uid,
+                                              _selectedDate!);
+                                    } else {
+                                      await readFromFirebase();
+                                    }
+                                    setState(() {
+                                      // filter by category after fetching
+                                      transactions = _filterByCategory(
+                                          transactions, _selectedCategory);
+                                    });
+                                    setStateDialog(() => _isFiltering = false);
+                                    Navigator.pop(context);
+                                  },
+                            child: const Text('Apply'),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -565,10 +711,11 @@ class _TransactionScreenState extends State<TransactionScreen> {
         ),
       );
     }
-
-    final displayTransactions =
+    // Apply filter to displayTransactions
+    List<Transaction> displayTransactions =
         searchResults.isNotEmpty ? searchResults : transactions;
-
+    displayTransactions =
+        _filterByCategory(displayTransactions, _selectedCategory);
     if (displayTransactions.isEmpty) {
       return Center(
         child: Column(
@@ -576,40 +723,39 @@ class _TransactionScreenState extends State<TransactionScreen> {
           children: [
             Icon(
               Icons.receipt_long,
-              size: 64,
-              color: Colors.grey[700],
+              size: 48,
+              color: Colors.grey[400],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             Text(
               'No transactions found',
               style: TextStyle(
-                color: Colors.grey[400],
-                fontSize: 18,
+                color: Colors.grey[500],
+                fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
-              'Try adjusting your search or date filter',
+              'Try adjusting your search or filter',
               style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 14,
+                color: Colors.grey[400],
+                fontSize: 13,
               ),
             ),
           ],
         ),
       );
     }
-
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.only(top: 0, left: 0, right: 0, bottom: 8),
       itemCount: displayTransactions.length,
       itemBuilder: (context, index) {
         final isLastItem = index == displayTransactions.length - 1;
         return Column(
           children: [
             TransactionCard(transaction: displayTransactions[index]),
-            if (!isLastItem) const SizedBox(height: 8),
+            if (!isLastItem) const SizedBox(height: 6),
           ],
         );
       },
