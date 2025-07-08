@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:telephony/telephony.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:personal_finance_tracker/model/transaction_model.dart';
+import 'budget_screen.dart';
 
 class TransactionScreen extends StatefulWidget {
   const TransactionScreen({super.key});
@@ -346,7 +347,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
     final List<Widget> screens = [
       _buildTransactionView(),
       DashboardScreen(transactions: transactions),
-      // Any other screen such as Dashboard
+      BudgetScreen(),
     ];
 
     return Scaffold(
@@ -366,6 +367,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.bar_chart),
             label: 'Stats',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.account_balance_wallet),
+            label: 'Budget',
           ),
         ],
       ),
