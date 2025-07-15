@@ -5,6 +5,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:personal_finance_tracker/pages/transaction_analyzer.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 class SignUpPage extends StatefulWidget {
   static route() => MaterialPageRoute(
@@ -60,12 +61,13 @@ class _SignUpPageState extends State<SignUpPage> {
               password: passwordController.text.trim());
 
       String? deviceId = await getDeviceId();
+      String? token = await FirebaseMessaging.instance.getToken();
 
       if (deviceId != null && userCredential.user != null) {
         await FirebaseFirestore.instance
             .collection("users")
             .doc(userCredential.user!.uid)
-            .set({'deviceId': deviceId});
+            .set({'deviceId': deviceId, 'fcmToken': token});
 
         if (mounted) {
           Navigator.pushReplacement(

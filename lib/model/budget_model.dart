@@ -5,12 +5,16 @@ class Budget {
   final DateTime month;
   final double spent;
   final String userId;
+  final bool notified50;
+  final bool notified90;
 
   Budget({
     required this.amount,
     required this.month,
     required this.spent,
     required this.userId,
+    this.notified50 = false,
+    this.notified90 = false,
   });
 
   Map<String, dynamic> toMap() {
@@ -19,6 +23,8 @@ class Budget {
       'month': Timestamp.fromDate(month),
       'spent': spent,
       'userId': userId,
+      'notified50': notified50,
+      'notified90': notified90,
     };
   }
 
@@ -28,6 +34,26 @@ class Budget {
       month: (map['month'] as Timestamp).toDate(),
       spent: (map['spent'] as num).toDouble(),
       userId: map['userId'] as String,
+      notified50: map['notified50'] ?? false,
+      notified90: map['notified90'] ?? false,
+    );
+  }
+
+  Budget copyWith({
+    double? amount,
+    DateTime? month,
+    double? spent,
+    String? userId,
+    bool? notified50,
+    bool? notified90,
+  }) {
+    return Budget(
+      amount: amount ?? this.amount,
+      month: month ?? this.month,
+      spent: spent ?? this.spent,
+      userId: userId ?? this.userId,
+      notified50: notified50 ?? this.notified50,
+      notified90: notified90 ?? this.notified90,
     );
   }
 }

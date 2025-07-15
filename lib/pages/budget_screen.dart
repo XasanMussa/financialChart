@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../model/budget_model.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class BudgetScreen extends StatefulWidget {
   const BudgetScreen({Key? key}) : super(key: key);
@@ -20,9 +21,43 @@ class _BudgetScreenState extends State<BudgetScreen> {
   List<Map<String, dynamic>> _latestTransactions = [];
   bool _showAllTransactions = false;
 
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+
+  void initializeNotifications() {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initializationSettings =
+        InitializationSettings(
+      android: initializationSettingsAndroid,
+    );
+    flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  }
+
+  Future<void> showBudgetNotification(String title, String body) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+        AndroidNotificationDetails(
+      'budget_channel',
+      'Budget Alerts',
+      channelDescription: 'Notifications for budget thresholds',
+      importance: Importance.max,
+      priority: Priority.high,
+      ticker: 'ticker',
+    );
+    const NotificationDetails platformChannelSpecifics =
+        NotificationDetails(android: androidPlatformChannelSpecifics);
+    await flutterLocalNotificationsPlugin.show(
+      0,
+      title,
+      body,
+      platformChannelSpecifics,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    initializeNotifications();
     _fetchBudgetAndSpent();
   }
 
@@ -73,6 +108,13 @@ class _BudgetScreenState extends State<BudgetScreen> {
       _latestTransactions = allTx;
       _isLoading = false;
     });
+    await _checkAndNotifyBudget(
+        user.uid,
+        monthKey,
+        _budgetAmount ?? 0,
+        spent,
+        _currentBudget?.notified50 ?? false,
+        _currentBudget?.notified90 ?? false);
   }
 
   Future<void> _saveBudget() async {
@@ -86,6 +128,8 @@ class _BudgetScreenState extends State<BudgetScreen> {
       month: DateTime(now.year, now.month),
       spent: _spent,
       userId: user.uid,
+      notified50: _currentBudget?.notified50 ?? false,
+      notified90: _currentBudget?.notified90 ?? false,
     );
     await FirebaseFirestore.instance
         .collection('users')
@@ -100,6 +144,36 @@ class _BudgetScreenState extends State<BudgetScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Budget saved!')),
     );
+    await _checkAndNotifyBudget(user.uid, monthKey, amount, _spent,
+        budget.notified50, budget.notified90);
+  }
+
+  Future<void> _checkAndNotifyBudget(String userId, String monthKey,
+      double amount, double spent, bool notified50, bool notified90) async {
+    final budgetRef = FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
+        .collection('budgets')
+        .doc(monthKey);
+    if (amount == 0) return;
+    if (spent > amount) {
+      await showBudgetNotification(
+          'Budget Limit Exceeded', 'You have exceeded your monthly budget!');
+    } else if (spent >= 0.9 * amount && !notified90) {
+      await showBudgetNotification(
+          'Budget Alert', 'You have reached 90% of your monthly budget.');
+      await budgetRef.update({'notified90': true});
+      setState(() {
+        _currentBudget = _currentBudget?.copyWith(notified90: true);
+      });
+    } else if (spent >= 0.5 * amount && !notified50) {
+      await showBudgetNotification(
+          'Budget Alert', 'You have reached 50% of your monthly budget.');
+      await budgetRef.update({'notified50': true});
+      setState(() {
+        _currentBudget = _currentBudget?.copyWith(notified50: true);
+      });
+    }
   }
 
   @override
