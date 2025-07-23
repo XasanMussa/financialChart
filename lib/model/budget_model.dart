@@ -7,6 +7,7 @@ class Budget {
   final String userId;
   final bool notified50;
   final bool notified90;
+  final bool notified100;
 
   Budget({
     required this.amount,
@@ -15,16 +16,18 @@ class Budget {
     required this.userId,
     this.notified50 = false,
     this.notified90 = false,
+    this.notified100 = false,
   });
 
   Map<String, dynamic> toMap() {
     return {
       'amount': amount,
-      'month': Timestamp.fromDate(month),
+      'month': month,
       'spent': spent,
       'userId': userId,
       'notified50': notified50,
       'notified90': notified90,
+      'notified100': notified100,
     };
   }
 
@@ -34,8 +37,9 @@ class Budget {
       month: (map['month'] as Timestamp).toDate(),
       spent: (map['spent'] as num).toDouble(),
       userId: map['userId'] as String,
-      notified50: map['notified50'] ?? false,
-      notified90: map['notified90'] ?? false,
+      notified50: map['notified50'] as bool? ?? false,
+      notified90: map['notified90'] as bool? ?? false,
+      notified100: map['notified100'] as bool? ?? false,
     );
   }
 
@@ -46,6 +50,7 @@ class Budget {
     String? userId,
     bool? notified50,
     bool? notified90,
+    bool? notified100,
   }) {
     return Budget(
       amount: amount ?? this.amount,
@@ -54,6 +59,7 @@ class Budget {
       userId: userId ?? this.userId,
       notified50: notified50 ?? this.notified50,
       notified90: notified90 ?? this.notified90,
+      notified100: notified100 ?? this.notified100,
     );
   }
 }

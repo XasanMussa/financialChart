@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:personal_finance_tracker/authentication/signup_page.dart';
 import 'package:personal_finance_tracker/model/transaction_card.dart';
 import 'package:personal_finance_tracker/pages/dashboard_screen.dart';
+import 'package:personal_finance_tracker/pages/notifications_screen.dart';
 import 'package:personal_finance_tracker/widgets/date_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -35,6 +36,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
   String? _selectedCategory = 'All';
   String? _selectedDate;
   bool _isFiltering = false;
+
+  late final User? _user;
+  Stream<int>? _unreadNotificationsStream;
 
   // Load transactions and upload them if not already uploaded
   Future<void> _loadTransactions() async {
@@ -337,6 +341,16 @@ class _TransactionScreenState extends State<TransactionScreen> {
   @override
   void initState() {
     super.initState();
+    _user = FirebaseAuth.instance.currentUser;
+    if (_user != null) {
+      _unreadNotificationsStream = FirebaseFirestore.FirebaseFirestore.instance
+          .collection('users')
+          .doc(_user!.uid)
+          .collection('notifications')
+          .where('isRead', isEqualTo: false)
+          .snapshots()
+          .map((snapshot) => snapshot.docs.length);
+    }
     check();
 
     // getDeviceId();
@@ -395,6 +409,50 @@ class _TransactionScreenState extends State<TransactionScreen> {
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.blue),
             onPressed: check,
+          ),
+          StreamBuilder<int>(
+            stream: _unreadNotificationsStream,
+            builder: (context, snapshot) {
+              final unreadCount = snapshot.data ?? 0;
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.notifications, color: Colors.blue),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => const NotificationsScreen()),
+                      );
+                    },
+                  ),
+                  if (unreadCount > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          '$unreadCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.blue),

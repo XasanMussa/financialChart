@@ -3,6 +3,7 @@ import 'package:personal_finance_tracker/model/transaction_model.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'notifications_screen.dart'; // Import the notifications screen
 
 class DashboardScreen extends StatefulWidget {
   final List<Transaction> transactions;

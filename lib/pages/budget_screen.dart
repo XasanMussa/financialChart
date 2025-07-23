@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../model/budget_model.dart';
+import '../model/notification_model.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class BudgetScreen extends StatefulWidget {
@@ -114,7 +115,8 @@ class _BudgetScreenState extends State<BudgetScreen> {
         _budgetAmount ?? 0,
         spent,
         _currentBudget?.notified50 ?? false,
-        _currentBudget?.notified90 ?? false);
+        _currentBudget?.notified90 ?? false,
+        _currentBudget?.notified100 ?? false);
   }
 
   Future<void> _saveBudget() async {
@@ -130,6 +132,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
       userId: user.uid,
       notified50: _currentBudget?.notified50 ?? false,
       notified90: _currentBudget?.notified90 ?? false,
+      notified100: _currentBudget?.notified100 ?? false,
     );
     await FirebaseFirestore.instance
         .collection('users')
@@ -145,30 +148,64 @@ class _BudgetScreenState extends State<BudgetScreen> {
       const SnackBar(content: Text('Budget saved!')),
     );
     await _checkAndNotifyBudget(user.uid, monthKey, amount, _spent,
-        budget.notified50, budget.notified90);
+        budget.notified50, budget.notified90, budget.notified100);
   }
 
-  Future<void> _checkAndNotifyBudget(String userId, String monthKey,
-      double amount, double spent, bool notified50, bool notified90) async {
+  Future<void> _saveNotification(
+      String userId, String title, String body) async {
+    final notificationCollection = FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
+        .collection('notifications');
+
+    final notification = NotificationModel(
+      id: notificationCollection.doc().id,
+      title: title,
+      body: body,
+      timestamp: DateTime.now(),
+      userId: userId,
+    );
+
+    await notificationCollection.doc(notification.id).set(notification.toMap());
+  }
+
+  Future<void> _checkAndNotifyBudget(
+      String userId,
+      String monthKey,
+      double amount,
+      double spent,
+      bool notified50,
+      bool notified90,
+      bool notified100) async {
     final budgetRef = FirebaseFirestore.instance
         .collection('users')
         .doc(userId)
         .collection('budgets')
         .doc(monthKey);
     if (amount == 0) return;
-    if (spent > amount) {
-      await showBudgetNotification(
-          'Budget Limit Exceeded', 'You have exceeded your monthly budget!');
+    if (spent > amount && !notified100) {
+      const title = 'Budget Limit Exceeded';
+      const body = 'You have exceeded your monthly budget!';
+      await showBudgetNotification(title, body);
+      await _saveNotification(userId, title, body);
+      await budgetRef.update({'notified100': true});
+      setState(() {
+        _currentBudget = _currentBudget?.copyWith(notified100: true);
+      });
     } else if (spent >= 0.9 * amount && !notified90) {
-      await showBudgetNotification(
-          'Budget Alert', 'You have reached 90% of your monthly budget.');
+      const title = 'Budget Alert';
+      const body = 'You have reached 90% of your monthly budget.';
+      await showBudgetNotification(title, body);
+      await _saveNotification(userId, title, body);
       await budgetRef.update({'notified90': true});
       setState(() {
         _currentBudget = _currentBudget?.copyWith(notified90: true);
       });
     } else if (spent >= 0.5 * amount && !notified50) {
-      await showBudgetNotification(
-          'Budget Alert', 'You have reached 50% of your monthly budget.');
+      const title = 'Budget Alert';
+      const body = 'You have reached 50% of your monthly budget.';
+      await showBudgetNotification(title, body);
+      await _saveNotification(userId, title, body);
       await budgetRef.update({'notified50': true});
       setState(() {
         _currentBudget = _currentBudget?.copyWith(notified50: true);
@@ -180,7 +217,10 @@ class _BudgetScreenState extends State<BudgetScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Monthly Budget'),
+        title: const Text(
+          'Monthly Budget',
+          style: TextStyle(color: Colors.white),
+        ),
         backgroundColor: const Color(0xFF0A0E21),
       ),
       backgroundColor: const Color(0xFF0A0E21),
