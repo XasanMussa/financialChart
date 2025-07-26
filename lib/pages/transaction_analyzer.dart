@@ -59,6 +59,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
   late final User? _user;
   Stream<int>? _unreadNotificationsStream;
 
+  // --- ADDED: Deletion in progress flag ---
+  bool _isDeletingAccount = false;
+  // --- END ADDED ---
+
   // Load transactions and upload them if not already uploaded
   Future<void> _loadTransactions() async {
     setState(() {
@@ -96,6 +100,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
     // Use Future.delayed to run this in the background and avoid blocking the UI
     Future(() async {
       for (var transaction in parsedTransactions) {
+        // --- ADDED: Abort if deleting account ---
+        if (_isDeletingAccount) break;
+        // --- END ADDED ---
         bool exists =
             await _isTransactionUploadedLocally(transaction.transactionID);
         if (!exists) {
@@ -146,6 +153,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
   // Upload the transaction to Firebase and store its transactionID locally
   Future<void> _uploadTransactionToFirebase(Transaction transaction) async {
+    // --- ADDED: Abort if deleting account ---
+    if (_isDeletingAccount) return;
+    // --- END ADDED ---
     String? deviceID = await getDeviceId();
     try {
       print(
@@ -250,6 +260,11 @@ class _TransactionScreenState extends State<TransactionScreen> {
 
   // Delete user account and all associated data
   Future<void> _deleteAccount() async {
+    // --- ADDED: Set deletion flag ---
+    setState(() {
+      _isDeletingAccount = true;
+    });
+    // --- END ADDED ---
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       showSnackbar(context, "No user logged in");
@@ -379,10 +394,9 @@ class _TransactionScreenState extends State<TransactionScreen> {
         // Always sign out and navigate to signup page
         await FirebaseAuth.instance.signOut();
         if (mounted) {
-          Navigator.of(context).pop();
+          Navigator.of(context).pop(); // Close the progress dialog
         }
         if (mounted) {
-          showSnackbar(context, "Account deleted successfully");
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(builder: (context) => SignUpPage()),
@@ -391,7 +405,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
         print("[DEBUG] Account deletion process completed.");
       } catch (e) {
         if (mounted) {
-          Navigator.of(context).pop();
+          Navigator.of(context).pop(); // Close the progress dialog
         }
         if (mounted) {
           showSnackbar(context, "Error deleting account: $e");
