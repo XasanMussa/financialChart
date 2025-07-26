@@ -14,7 +14,26 @@ import 'package:flutter/material.dart';
 import 'package:telephony/telephony.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:personal_finance_tracker/model/transaction_model.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
 import 'budget_screen.dart';
+import 'package:encrypt/encrypt.dart' as encrypt;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+// Secure storage instance
+final FlutterSecureStorage secureStorage = const FlutterSecureStorage();
+const String _encryptionKeyStorageKey = 'encryption_key';
+
+Future<encrypt.Key> _getOrCreateEncryptionKey() async {
+  String? keyString = await secureStorage.read(key: _encryptionKeyStorageKey);
+  if (keyString == null) {
+    // Generate a new 32-byte key (AES-256)
+    final key = encrypt.Key.fromSecureRandom(32);
+    await secureStorage.write(key: _encryptionKeyStorageKey, value: key.base64);
+    return key;
+  }
+  return encrypt.Key.fromBase64(keyString);
+}
 
 class TransactionScreen extends StatefulWidget {
   const TransactionScreen({super.key});
@@ -129,24 +148,32 @@ class _TransactionScreenState extends State<TransactionScreen> {
   Future<void> _uploadTransactionToFirebase(Transaction transaction) async {
     String? deviceID = await getDeviceId();
     try {
-      // Debug log for phone number being stored
       print(
           '📱 Storing transaction with phone number: ${transaction.phoneNumber}');
 
-      //upload deviceid to firebase
+      // Get encryption key
+      final key = await _getOrCreateEncryptionKey();
+      final iv = encrypt.IV.fromSecureRandom(16); // 16 bytes for AES
+      final encrypter = encrypt.Encrypter(encrypt.AES(key));
+      // Encrypt the original message
+      final encrypted = encrypter.encrypt(transaction.originalMessage, iv: iv);
+      final encryptedMessage = encrypted.base64;
+      final ivBase64 = iv.base64;
+
       await FirebaseFirestore.FirebaseFirestore.instance
           .collection("users")
           .doc(FirebaseAuth.instance.currentUser?.uid)
           .set({'deviceId': deviceID});
 
-      // Upload the transaction to Firebase
+      // Store both encrypted message and IV
       await FirebaseFirestore.FirebaseFirestore.instance
           .collection('users')
           .doc(FirebaseAuth.instance.currentUser?.uid)
           .collection('transactions')
           .doc(transaction.transactionID)
           .set({
-        'sender': transaction.originalMessage,
+        'sender': encryptedMessage, // Encrypted message
+        'iv': ivBase64, // Store IV for decryption
         'amount': transaction.amount,
         'category': transaction.category,
         'date': FirebaseFirestore.Timestamp.fromDate(transaction.date!),
@@ -155,7 +182,6 @@ class _TransactionScreenState extends State<TransactionScreen> {
         'transactionID': transaction.transactionID,
       });
 
-      // Store the transactionID in local storage to mark it as uploaded
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(transaction.transactionID, true);
 
@@ -180,24 +206,464 @@ class _TransactionScreenState extends State<TransactionScreen> {
     }
   }
 
+  // Show delete account confirmation dialog
+  void _showDeleteAccountDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1D1E33),
+          title: const Text(
+            'Delete Account',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: const Text(
+            'Are you sure you want to delete your account? This action cannot be undone. All your data including transactions, budgets, and notifications will be permanently deleted.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.blue),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _deleteAccount();
+              },
+              child: const Text(
+                'Delete',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Delete user account and all associated data
+  Future<void> _deleteAccount() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      showSnackbar(context, "No user logged in");
+      return;
+    }
+
+    String progressMessage = "Preparing to delete account...";
+    late StateSetter dialogSetState;
+
+    print("[DEBUG] Starting account deletion for user: " + user.uid);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            dialogSetState = setState;
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1D1E33),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    progressMessage,
+                    style: const TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    // Start deletion after dialog is visible
+    Future.delayed(const Duration(milliseconds: 100), () async {
+      try {
+        print("[DEBUG] Deleting user data from Firestore...");
+        await _deleteUserDataFromFirestore(user.uid, (msg) {
+          progressMessage = msg;
+          if (mounted) dialogSetState(() {});
+        });
+        print("[DEBUG] Finished deleting user data from Firestore.");
+
+        progressMessage = "Clearing local data...";
+        if (mounted) dialogSetState(() {});
+        print("[DEBUG] Clearing local SharedPreferences data...");
+        await _clearLocalData();
+        print("[DEBUG] Finished clearing local data.");
+
+        progressMessage = "Deleting authentication...";
+        if (mounted) dialogSetState(() {});
+        print("[DEBUG] Deleting Firebase Auth user...");
+        try {
+          await user.delete();
+          print("[DEBUG] Finished deleting Firebase Auth user.");
+        } on FirebaseAuthException catch (e) {
+          if (e.code == 'requires-recent-login') {
+            print("[DEBUG] Re-authentication required, showing dialog...");
+            // Close the progress dialog temporarily
+            if (mounted) {
+              Navigator.of(context).pop();
+            }
+
+            // Show re-authentication dialog
+            bool reauthSuccess = await _showReauthDialog();
+
+            if (reauthSuccess) {
+              print(
+                  "[DEBUG] Re-authentication successful, retrying deletion...");
+              // Show progress dialog again
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (BuildContext context) {
+                  return StatefulBuilder(
+                    builder: (context, setState) {
+                      dialogSetState = setState;
+                      return AlertDialog(
+                        backgroundColor: const Color(0xFF1D1E33),
+                        content: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.blue),
+                            ),
+                            const SizedBox(height: 20),
+                            Text(
+                              progressMessage,
+                              style: const TextStyle(color: Colors.white),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                },
+              );
+
+              // Retry deletion after re-authentication
+              try {
+                await user.delete();
+                print(
+                    "[DEBUG] Successfully deleted Firebase Auth user after re-authentication.");
+              } catch (e) {
+                print(
+                    "[ERROR] Failed to delete user even after re-authentication: $e");
+              }
+            } else {
+              print("[DEBUG] Re-authentication cancelled by user.");
+            }
+          } else {
+            print("[ERROR] Error deleting Firebase Auth user: $e");
+          }
+        } catch (e) {
+          print("[ERROR] Error deleting Firebase Auth user: $e");
+        }
+
+        // Always sign out and navigate to signup page
+        await FirebaseAuth.instance.signOut();
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+        if (mounted) {
+          showSnackbar(context, "Account deleted successfully");
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => SignUpPage()),
+          );
+        }
+        print("[DEBUG] Account deletion process completed.");
+      } catch (e) {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+        if (mounted) {
+          showSnackbar(context, "Error deleting account: $e");
+        }
+        print("[ERROR] Error during account deletion: $e");
+        // Always sign out and navigate to signup page on error
+        await FirebaseAuth.instance.signOut();
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => SignUpPage()),
+          );
+        }
+      }
+    });
+  }
+
+  // Show password re-authentication dialog
+  Future<bool> _showReauthDialog() async {
+    final TextEditingController passwordController = TextEditingController();
+    bool isLoading = false;
+    String errorMessage = '';
+
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext context) {
+            return StatefulBuilder(
+              builder: (context, setState) {
+                return AlertDialog(
+                  backgroundColor: const Color(0xFF1D1E33),
+                  title: const Text(
+                    'Re-authentication Required',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'For security reasons, please enter your password to confirm account deletion.',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                      const SizedBox(height: 20),
+                      TextField(
+                        controller: passwordController,
+                        obscureText: true,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: 'Password',
+                          labelStyle: TextStyle(color: Colors.white70),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.blue),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.blue),
+                          ),
+                        ),
+                      ),
+                      if (errorMessage.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            errorMessage,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      if (isLoading)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 16),
+                          child: CircularProgressIndicator(
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.blue),
+                          ),
+                        ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: isLoading
+                          ? null
+                          : () => Navigator.of(context).pop(false),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(color: Colors.blue),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: isLoading
+                          ? null
+                          : () async {
+                              if (passwordController.text.isEmpty) {
+                                setState(() {
+                                  errorMessage = 'Please enter your password';
+                                });
+                                return;
+                              }
+
+                              setState(() {
+                                isLoading = true;
+                                errorMessage = '';
+                              });
+
+                              try {
+                                final user = FirebaseAuth.instance.currentUser;
+                                if (user != null && user.email != null) {
+                                  // Re-authenticate with email and password
+                                  AuthCredential credential =
+                                      EmailAuthProvider.credential(
+                                    email: user.email!,
+                                    password: passwordController.text,
+                                  );
+                                  await user
+                                      .reauthenticateWithCredential(credential);
+                                  Navigator.of(context).pop(true);
+                                } else {
+                                  setState(() {
+                                    errorMessage = 'User email not found';
+                                  });
+                                }
+                              } on FirebaseAuthException catch (e) {
+                                setState(() {
+                                  errorMessage =
+                                      e.message ?? 'Authentication failed';
+                                });
+                              } catch (e) {
+                                setState(() {
+                                  errorMessage = 'An error occurred';
+                                });
+                              } finally {
+                                setState(() {
+                                  isLoading = false;
+                                });
+                              }
+                            },
+                      child: const Text(
+                        'Confirm',
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        ) ??
+        false;
+  }
+
+  // Delete all user data from Firestore
+  Future<void> _deleteUserDataFromFirestore(
+      String userId, void Function(String) updateProgress) async {
+    try {
+      final userDoc = FirebaseFirestore.FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId);
+
+      print("[DEBUG] Deleting transactions subcollection...");
+      updateProgress("Deleting transactions...");
+      await _deleteSubcollection(userDoc, 'transactions', updateProgress);
+      print("[DEBUG] Finished deleting transactions.");
+
+      print("[DEBUG] Deleting notifications subcollection...");
+      updateProgress("Deleting notifications...");
+      await _deleteSubcollection(userDoc, 'notifications', updateProgress);
+      print("[DEBUG] Finished deleting notifications.");
+
+      print("[DEBUG] Deleting budgets subcollection...");
+      updateProgress("Deleting budgets...");
+      await _deleteSubcollection(userDoc, 'budgets', updateProgress);
+      print("[DEBUG] Finished deleting budgets.");
+
+      print("[DEBUG] Deleting user document...");
+      updateProgress("Deleting user profile...");
+      await userDoc.delete();
+      print("[DEBUG] Finished deleting user document.");
+
+      print("[DEBUG] All user data deleted from Firestore");
+    } catch (e) {
+      print("[ERROR] Error deleting user data from Firestore: $e");
+      throw e;
+    }
+  }
+
+  // Delete a subcollection recursively
+  Future<void> _deleteSubcollection(FirebaseFirestore.DocumentReference userDoc,
+      String subcollectionName, void Function(String) updateProgress) async {
+    try {
+      final subcollectionRef = userDoc.collection(subcollectionName);
+      final documents = await subcollectionRef.get();
+      print("[DEBUG] Found " +
+          documents.docs.length.toString() +
+          " documents in subcollection '" +
+          subcollectionName +
+          "'.");
+
+      if (documents.docs.isNotEmpty) {
+        updateProgress(
+            "Deleting $subcollectionName (${documents.docs.length} items)...");
+
+        for (int i = 0; i < documents.docs.length; i++) {
+          print(
+              "[DEBUG] Deleting document ${i + 1}/${documents.docs.length} in '$subcollectionName' (ID: ${documents.docs[i].id})");
+          await documents.docs[i].reference.delete();
+          print(
+              "[DEBUG] Deleted document ${i + 1}/${documents.docs.length} in '$subcollectionName'");
+
+          if ((i + 1) % 10 == 0 || i == documents.docs.length - 1) {
+            updateProgress(
+                "Deleting $subcollectionName (${i + 1}/${documents.docs.length} items)...");
+          }
+        }
+      } else {
+        updateProgress("Deleting $subcollectionName (empty collection)...");
+      }
+
+      print("[DEBUG] Deleted subcollection: $subcollectionName");
+    } catch (e) {
+      print("[ERROR] Error deleting subcollection $subcollectionName: $e");
+      // Continue with other deletions even if one fails
+    }
+  }
+
+  // Clear local SharedPreferences data
+  Future<void> _clearLocalData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      print("Local SharedPreferences data cleared");
+    } catch (e) {
+      print("Error clearing local data: $e");
+      // Continue even if local data clearing fails
+    }
+  }
+
   Future<List<Transaction>> getTransactions(String? userUid) async {
     try {
       final snapshot = await FirebaseFirestore.FirebaseFirestore.instance
           .collection('users')
           .doc(userUid)
           .collection('transactions')
-          .orderBy('date', descending: true) // Order by date descending
+          .orderBy('date', descending: true)
           .get();
+
+      final key = await _getOrCreateEncryptionKey();
+      final encrypter = encrypt.Encrypter(encrypt.AES(key));
 
       return snapshot.docs.map((doc) {
         final data = doc.data();
+        String? encryptedMessage = data['sender'] as String?;
+        String? ivBase64 = data['iv'] as String?;
+        String originalMessage;
+        if (encryptedMessage != null && ivBase64 != null) {
+          try {
+            final iv = encrypt.IV.fromBase64(ivBase64);
+            originalMessage = encrypter.decrypt64(encryptedMessage, iv: iv);
+          } catch (e) {
+            originalMessage = '[Decryption failed]';
+          }
+        } else {
+          // Fallback for legacy/plaintext data
+          originalMessage = encryptedMessage ?? '[No message]';
+        }
         return Transaction(
           isExpense: (data['isExpense'] as bool?) ?? false,
           amount: (data['amount'] as num?)?.toDouble() ?? 0.0,
           phoneNumber: data['phone'] as String? ?? 'Unknown',
           date: (data['date'] as FirebaseFirestore.Timestamp?)?.toDate() ??
               DateTime.now(),
-          originalMessage: data['sender'] as String? ?? 'No message',
+          originalMessage: originalMessage,
           category: data['category'] as String? ?? 'Uncategorized',
           transactionID: data['transactionID'] as String? ?? 'Unknown_ID',
         );
@@ -230,15 +696,31 @@ class _TransactionScreenState extends State<TransactionScreen> {
           .orderBy('date', descending: true)
           .get();
 
+      final key = await _getOrCreateEncryptionKey();
+      final encrypter = encrypt.Encrypter(encrypt.AES(key));
+
       return snapshot.docs.map((doc) {
         final data = doc.data();
+        String? encryptedMessage = data['sender'] as String?;
+        String? ivBase64 = data['iv'] as String?;
+        String originalMessage;
+        if (encryptedMessage != null && ivBase64 != null) {
+          try {
+            final iv = encrypt.IV.fromBase64(ivBase64);
+            originalMessage = encrypter.decrypt64(encryptedMessage, iv: iv);
+          } catch (e) {
+            originalMessage = '[Decryption failed]';
+          }
+        } else {
+          originalMessage = encryptedMessage ?? '[No message]';
+        }
         return Transaction(
           isExpense: (data['isExpense'] as bool?) ?? false,
           amount: (data['amount'] as num?)?.toDouble() ?? 0.0,
           phoneNumber: data['phone'] as String? ?? 'Unknown',
           date: (data['date'] as FirebaseFirestore.Timestamp?)?.toDate() ??
               DateTime.now(),
-          originalMessage: data['sender'] as String? ?? 'No message',
+          originalMessage: originalMessage,
           category: data['category'] as String? ?? 'Uncategorized',
           transactionID: data['transactionID'] as String? ?? 'Unknown_ID',
         );
@@ -257,10 +739,8 @@ class _TransactionScreenState extends State<TransactionScreen> {
         return [];
       }
 
-      // Convert selectedDate (yy-MM-dd) to a DateTime object
       DateTime dateTime = DateFormat('yy-MM-dd').parse(selectedDate);
 
-      // Get the start and end of the day as Timestamp
       FirebaseFirestore.Timestamp startOfDay =
           FirebaseFirestore.Timestamp.fromDate(
               DateTime(dateTime.year, dateTime.month, dateTime.day, 0, 0, 0));
@@ -268,31 +748,40 @@ class _TransactionScreenState extends State<TransactionScreen> {
           FirebaseFirestore.Timestamp.fromDate(DateTime(
               dateTime.year, dateTime.month, dateTime.day, 23, 59, 59));
 
-      print(
-          "🔍 Querying Firestore between: ${startOfDay.toDate()} and ${endOfDay.toDate()}");
-
-      // Firestore query to get transactions within the selected date range
       final snapshot = await FirebaseFirestore.FirebaseFirestore.instance
           .collection('users')
           .doc(userUid)
           .collection('transactions')
           .where('date', isGreaterThanOrEqualTo: startOfDay)
           .where('date', isLessThanOrEqualTo: endOfDay)
-          .orderBy('date', descending: true) // Order by date descending
+          .orderBy('date', descending: true)
           .get();
 
-      print(
-          "📄 Transactions found for date $selectedDate: ${snapshot.docs.length}");
+      final key = await _getOrCreateEncryptionKey();
+      final encrypter = encrypt.Encrypter(encrypt.AES(key));
 
       return snapshot.docs.map((doc) {
         final data = doc.data();
+        String? encryptedMessage = data['sender'] as String?;
+        String? ivBase64 = data['iv'] as String?;
+        String originalMessage;
+        if (encryptedMessage != null && ivBase64 != null) {
+          try {
+            final iv = encrypt.IV.fromBase64(ivBase64);
+            originalMessage = encrypter.decrypt64(encryptedMessage, iv: iv);
+          } catch (e) {
+            originalMessage = '[Decryption failed]';
+          }
+        } else {
+          originalMessage = encryptedMessage ?? '[No message]';
+        }
         return Transaction(
           isExpense: (data['isExpense'] as bool?) ?? false,
           amount: (data['amount'] as num?)?.toDouble() ?? 0.0,
           phoneNumber: data['phone'] as String? ?? 'Unknown',
           date: (data['date'] as FirebaseFirestore.Timestamp?)?.toDate() ??
               DateTime.now(),
-          originalMessage: data['sender'] as String? ?? 'No message',
+          originalMessage: originalMessage,
           category: data['category'] as String? ?? 'Uncategorized',
           transactionID: data['transactionID'] as String? ?? 'Unknown_ID',
         );
@@ -457,6 +946,11 @@ class _TransactionScreenState extends State<TransactionScreen> {
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.blue),
             onPressed: Logout,
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_forever, color: Colors.red),
+            onPressed: _showDeleteAccountDialog,
+            tooltip: 'Delete Account',
           ),
         ],
       ),

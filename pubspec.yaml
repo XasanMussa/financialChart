@@ -48,6 +48,8 @@ dependencies:
   standard_searchbar: ^2.1.1
   firebase_messaging: ^15.2.9
   flutter_local_notifications: ^19.3.0
+  encrypt: ^5.0.1
+  flutter_secure_storage: ^9.0.0
 
 dev_dependencies:
   flutter_test:
