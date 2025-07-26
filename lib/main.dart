@@ -1,16 +1,41 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:personal_finance_tracker/authentication/signup_page.dart';
-import 'package:personal_finance_tracker/firebase_options.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:personal_finance_tracker/pages/transaction_analyzer.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-void main() async {
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
+  await Firebase.initializeApp();
+
+  // Initialize flutter_local_notifications
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
   );
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+  // Request notification permissions
+  await _requestNotificationPermissions();
+
   runApp(const MyApp());
+}
+
+Future<void> _requestNotificationPermissions() async {
+  // iOS permissions
+  final iosImplementation =
+      flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+  await iosImplementation?.requestPermissions(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
 }
 
 class MyApp extends StatelessWidget {

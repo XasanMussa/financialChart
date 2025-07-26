@@ -10,7 +10,7 @@ plugins {
 
 android {
     namespace = "com.example.personal_finance_tracker"
-    compileSdk = 34
+    compileSdk = 35
     ndkVersion = "21.1.6352462"
 
     compileOptions {

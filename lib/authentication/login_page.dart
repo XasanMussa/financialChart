@@ -2,6 +2,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:personal_finance_tracker/authentication/signup_page.dart';
 import 'package:personal_finance_tracker/pages/transaction_analyzer.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginPage extends StatefulWidget {
   static route() => MaterialPageRoute(
@@ -36,6 +38,14 @@ class _LoginPageState extends State<LoginPage> {
           .signInWithEmailAndPassword(
               email: emailController.text.trim(),
               password: passwordController.text.trim());
+      // Save FCM token to Firestore
+      String? token = await FirebaseMessaging.instance.getToken();
+      if (token != null && userCredential.user != null) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredential.user!.uid)
+            .update({'fcmToken': token});
+      }
       if (mounted) {
         Navigator.pushReplacement(
           context,
