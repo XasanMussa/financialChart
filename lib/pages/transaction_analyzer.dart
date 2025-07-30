@@ -7,6 +7,7 @@ import 'package:personal_finance_tracker/model/transaction_card.dart';
 import 'package:personal_finance_tracker/pages/dashboard_screen.dart';
 import 'package:personal_finance_tracker/pages/notifications_screen.dart';
 import 'package:personal_finance_tracker/widgets/date_selector.dart';
+import 'package:personal_finance_tracker/widgets/app_drawer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' as FirebaseFirestore;
@@ -55,6 +56,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
   String? _selectedCategory = 'All';
   String? _selectedDate;
   bool _isFiltering = false;
+  bool _showTransactionDetails = false; // Hide by default
 
   late final User? _user;
   Stream<int>? _unreadNotificationsStream;
@@ -202,19 +204,7 @@ class _TransactionScreenState extends State<TransactionScreen> {
   }
 
   final isLoggedIn = "false";
-  Future<void> Logout() async {
-    try {
-      await FirebaseAuth.instance.signOut();
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => SignUpPage()),
-      );
-
-      print("User successfully logged out.");
-    } catch (e) {
-      print("Error during logout: $e");
-    }
-  }
+  // Logout function moved to AppDrawer
 
   // Show delete account confirmation dialog
   void _showDeleteAccountDialog() {
@@ -854,9 +844,21 @@ class _TransactionScreenState extends State<TransactionScreen> {
           .snapshots()
           .map((snapshot) => snapshot.docs.length);
     }
+    _checkFirstLaunch();
     check();
-
     // getDeviceId();
+  }
+
+  Future<void> _checkFirstLaunch() async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasOpened = prefs.getBool('hasOpenedAppBefore') ?? false;
+    if (!hasOpened) {
+      await prefs.setBool('hasOpenedAppBefore', true);
+      setState(() {
+        _selectedIndex = 0; // Ensure Transactions tab is selected
+        _showTransactionDetails = false; // Hide details on first launch
+      });
+    }
   }
 
   @override
@@ -866,6 +868,13 @@ class _TransactionScreenState extends State<TransactionScreen> {
       DashboardScreen(transactions: transactions),
       BudgetScreen(),
     ];
+
+    void handleTabSelected(int index) {
+      setState(() {
+        _selectedIndex = index;
+      });
+      Navigator.of(context).pop(); // Close the drawer if open
+    }
 
     return Scaffold(
       body: screens[_selectedIndex],
@@ -891,12 +900,21 @@ class _TransactionScreenState extends State<TransactionScreen> {
           ),
         ],
       ),
+      drawer: AppDrawer(
+        unreadNotificationsStream: _unreadNotificationsStream,
+        onDeleteAccount: _showDeleteAccountDialog,
+        onTabSelected: handleTabSelected,
+      ),
     );
   }
 
   Widget _buildTransactionView() {
     return Scaffold(
       backgroundColor: const Color(0xFF0A0E21),
+      drawer: AppDrawer(
+        unreadNotificationsStream: _unreadNotificationsStream,
+        onDeleteAccount: _showDeleteAccountDialog,
+      ),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0A0E21),
         elevation: 0,
@@ -913,58 +931,17 @@ class _TransactionScreenState extends State<TransactionScreen> {
             icon: const Icon(Icons.refresh, color: Colors.blue),
             onPressed: check,
           ),
-          StreamBuilder<int>(
-            stream: _unreadNotificationsStream,
-            builder: (context, snapshot) {
-              final unreadCount = snapshot.data ?? 0;
-              return Stack(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.notifications, color: Colors.blue),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) => const NotificationsScreen()),
-                      );
-                    },
-                  ),
-                  if (unreadCount > 0)
-                    Positioned(
-                      right: 8,
-                      top: 8,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        constraints: const BoxConstraints(
-                          minWidth: 16,
-                          minHeight: 16,
-                        ),
-                        child: Text(
-                          '$unreadCount',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                ],
-              );
+          IconButton(
+            icon: Icon(
+              _showTransactionDetails ? Icons.visibility : Icons.visibility_off,
+              color: Colors.blue,
+            ),
+            onPressed: () {
+              setState(() {
+                _showTransactionDetails = !_showTransactionDetails;
+              });
             },
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.blue),
-            onPressed: Logout,
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_forever, color: Colors.red),
-            onPressed: _showDeleteAccountDialog,
-            tooltip: 'Delete Account',
+            tooltip: _showTransactionDetails ? 'Hide Details' : 'Show Details',
           ),
         ],
       ),
@@ -1272,6 +1249,31 @@ class _TransactionScreenState extends State<TransactionScreen> {
   }
 
   Widget _buildBody() {
+    if (!_showTransactionDetails) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.visibility_off, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            const Text(
+              'Transactions are hidden',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Tap the eye icon in the top right to view your transactions.',
+              style: TextStyle(color: Colors.grey, fontSize: 14),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
     if (_permissionDenied) {
       return _PermissionDeniedMessage(onRetry: _loadTransactions);
     }
@@ -1325,7 +1327,10 @@ class _TransactionScreenState extends State<TransactionScreen> {
         final isLastItem = index == displayTransactions.length - 1;
         return Column(
           children: [
-            TransactionCard(transaction: displayTransactions[index]),
+            TransactionCard(
+              transaction: displayTransactions[index],
+              showDetails: _showTransactionDetails,
+            ),
             if (!isLastItem) const SizedBox(height: 6),
           ],
         );

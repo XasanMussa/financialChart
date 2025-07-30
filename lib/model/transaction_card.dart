@@ -4,8 +4,13 @@ import 'package:intl/intl.dart';
 
 class TransactionCard extends StatelessWidget {
   final Transaction transaction;
+  final bool showDetails;
 
-  const TransactionCard({super.key, required this.transaction});
+  const TransactionCard({
+    super.key, 
+    required this.transaction,
+    this.showDetails = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -43,39 +48,41 @@ class TransactionCard extends StatelessWidget {
             ],
           ),
           const Divider(height: 20, color: Colors.blueGrey),
-          if (transaction.phoneNumber != null &&
-              transaction.phoneNumber!.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                'Phone: ${transaction.phoneNumber}',
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Colors.blue,
-                  letterSpacing: 0.5,
+          if (showDetails) ...[
+            if (transaction.phoneNumber != null &&
+                transaction.phoneNumber!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  'Phone: ${transaction.phoneNumber}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Colors.blue,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ),
-            ),
-          if (transaction.date != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                'Date: ${DateFormat('dd/MM/yyyy HH:mm').format(transaction.date!)}',
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Colors.blue,
-                  letterSpacing: 0.5,
+            if (transaction.date != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Date: ${DateFormat('dd/MM/yyyy HH:mm').format(transaction.date!)}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Colors.blue,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ),
+            Text(
+              transaction.originalMessage,
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+              ),
             ),
-          Text(
-            transaction.originalMessage,
-            style: TextStyle(
-              color: Colors.grey[400],
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-            ),
-          ),
+          ],
         ],
       ),
     );
